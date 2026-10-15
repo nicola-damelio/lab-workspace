@@ -1,0 +1,56 @@
+1: /* =========================================================================
+2:    _recover_twins_check.mjs — « LE ESPERIENZE RECUPERATE SPARISCONO DI NUOVO ».
+3: 
+4:    Vérifie, avec les VRAIS modules (src/utils/experimentTombstones.js,
+5:    src/utils/loadSelection.js) et les VRAIS fichiers de reprise (_recover/*.json),
+6:    pourquoi une expérience reprise revient puis repart EN SILENCE.
+7: 
+8:    FUITES VÉRIFIÉES (chacune s'imprime « FUITE CONFIRMÉE » si le code laisse faire) :
+9:      ② la fenêtre d'import propose « à ajouter » une expérience dont l'ID est déjà là ;
+10:      ③ l'ajout (➕) empile un jumeau (même id, autre nom) ;
+11:      ④ la relecture (`mergeExperimentsAddOnly`) lâche la ligne reprise, `added` vide
+12:         donc AUCUN dialogue — invisible à l'écran ;
+13:      ⑤ l'enregistrement (`protectUnrecordedDrops`) publie la copie sans elle, muet ;
+14:      ⑥ le 🗑 d'une des deux lignes de même id n'enregistre AUCUN record ;
+15:      ⑦ un record portant l'id retirerait les DEUX noms (le modèle n'a pas de place
+16:         pour « un des noms d'un id ») → ⑥ ne se répare pas en enregistrant l'id ;
+17:      ⑧ la levée (🛡) comparée à un `deletedAt` écrit par un poste dont l'horloge
+18:         avance : la copie écrite repart sans les expériences reprises.
+19: 
+20:    Sortie : rapport (stdout + _diag_twins.txt) ; code de sortie 0 = aucune fuite
+21:    (après réparation), 1 = au moins une fuite CONFIRMÉE (l'état d'aujourd'hui).
+22:    ========================================================================= */
+23: import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+24: import { register } from 'node:module';
+25: import LZString from 'lz-string';
+26: 
+27: register('./_esm_test_hook.mjs', import.meta.url);
+28: 
+29: /* Un localStorage de poche : le magasin des records est écrit pour de vrai. */
+30: const fakeStore = new Map();
+31: globalThis.localStorage = {
+32:   getItem: (k) => (fakeStore.has(k) ? fakeStore.get(k) : null),
+33:   setItem: (k, v) => { fakeStore.set(k, String(v)); },
+34:   removeItem: (k) => { fakeStore.delete(k); },
+35:   clear: () => fakeStore.clear(),
+36: };
+37: 
+38: const T = await import('./src/utils/experimentTombstones.js');
+39: const L = await import('./src/utils/loadSelection.js');
+40: 
+41: const out = [];
+42: const say = (line = '') => { out.push(line); console.log(line); };
+43: const HOLES = [];
+44: const leak = (label, detail, isLeak) => {
+45:   if (isLeak) { HOLES.push(label); say(`  ✘ FUITE — ${label}`); } else say(`  ✔ protégé — ${label}`);
+46:   if (detail) String(detail).split('\n').forEach((l) => say(`      ${l}`));
+47: };
+48: 
+49: /* Le payload d'un fichier de reprise est COMPRESSÉ (LZString) : un `grep` sur le
+50:    fichier ne voit ni id ni nom. */
+51: const decompress = (doc) => {
+52:   const raw = doc && doc.payload;
+53:   if (raw && typeof raw === 'object') return raw;
+54:   if (typeof raw !== 'string' || !raw) return null;
+55:   const tries = [() => LZString.decompressFromUTF16(raw), () => LZString.decompress(raw), () => raw];
+56:   for (const t of tries) {

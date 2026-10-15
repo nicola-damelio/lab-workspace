@@ -1,0 +1,101 @@
+4320: 
+4321: 
+4322:   const exportHTML = async () => {
+4323:     try {
+4324:       const isAdmin = isAdministrationKind(activeDatasetKind);
+4325:       // Hard rule: experiments may not be saved without a Project.
+4326:       const validation = isAdmin ? { ok: true } : validateDatasetExperiments({ tests: latestDataRef.current?.tests || [] });
+4327:       if (!validation.ok) {
+4328:         setDialog({ type: 'alert', title: 'Experiments must be linked to a Project', message: `${validation.message}\n\nLink every experiment to at least one Project (Projects → open project → “+ Add experiment”, or link existing experiments inside the project), then save again.` });
+4329:         return;
+4330:       }
+4331:       const title = datasetTitle || (isAdmin ? 'Base d’administration' : 'Untitled Dataset');
+4332:       const subtitle = datasetSubtitle || '';
+4333:       const payload = isAdmin
+4334:         ? LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() }))
+4335:         : getCompressedPayload();
+4336: 
+4337:       /* Enregistre un instantané de l'ÉTAT du dataset (administratif comme
+4338:          scientifique) : un DOCUMENT JSON auto-descriptif, sur Google Drive dans
+4339:          le dossier de sauvegarde du dataset — Lab Workspace/<dataset>/backups/.
+4340:          C'est LE MÊME format que la sauvegarde hebdomadaire, donc relisible et
+4341:          VALIDABLE par « Load backup » de la même façon. Si Drive n'est pas
+4342:          connecté (ou en cas d'échec), le même document est téléchargé
+4343:          localement. */
+4344:       const snapshotDoc = buildBackupDocument({
+4345:         payload, title, subtitle, datasetId: currentDatasetId || '', savedAt: Date.now()
+4346:       });
+4347:       const snapshotText = backupDocumentText(snapshotDoc);
+4348:       const snapshotName = backupFileName({ title, datasetId: currentDatasetId, kind: 'save' });
+4349: 
+4350:       const downloadSnapshot = (jsonStr, fileName) => {
+4351:         const blob = new Blob([jsonStr], { type: 'application/json' });
+4352:         const url = URL.createObjectURL(blob);
+4353:         const a = document.createElement('a');
+4354:         a.href = url;
+4355:         a.download = fileName;
+4356:         document.body.appendChild(a);
+4357:         a.click();
+4358:         document.body.removeChild(a);
+4359:         setTimeout(() => URL.revokeObjectURL(url), 1000);
+4360:       };
+4361: 
+4362:       let storedOnDrive = false;
+4363:       if (getDriveToken() && currentDatasetId) {
+4364:         try {
+4365:           const res = await uploadWorkspaceFile({
+4366:             name: snapshotName,
+4367:             mimeType: 'application/json',
+4368:             file: new Blob([snapshotText], { type: 'application/json' }),
+4369:             folder: backupFolderOf(title),
+4370:           });
+4371:           if (res) {
+4372:             storedOnDrive = true;
+4373:             setBackupStatus({ state: 'ok', msg: `💾 État enregistré (${describeBackupCounts(snapshotDoc.counts)}) → Lab Workspace/<dataset>/backups` });
+4374:           }
+4375:         } catch (err) {
+4376:           console.warn('Saving the dataset snapshot to Drive failed:', err && err.message);
+4377:         }
+4378:       }
+4379: 
+4380:       if (storedOnDrive) return;
+4381: 
+4382:       setBackupStatus(
+4383:         getDriveToken() && currentDatasetId
+4384:           ? { state: 'error', msg: '⚠️ Enregistrement Drive impossible — copie locale téléchargée' }
+4385:           : { state: 'skip', msg: '💾 Google Drive non connecté — copie locale téléchargée' }
+4386:       );
+4387: 
+4388:       downloadSnapshot(snapshotText, snapshotName);
+4389:     } catch (e) {
+4390:       setDialog({
+4391:         type: 'alert',
+4392:         title: 'Save Failed',
+4393:         message: 'Could not save the dataset snapshot: ' + e.message
+4394:       });
+4395:     }
+4396:   };
+4397: 
+4398:   const loadHTML = (e) => {
+4399:     const file = e.target.files && e.target.files[0];
+4400: 
+4401:     if (!file) return;
+4402: 
+4403:     const reader = new FileReader();
+4404: 
+4405:     reader.onload = (ev) => {
+4406:       try {
+4407:         const text = ev.target.result;
+4408:         let s = null;
+4409:         let loadedTests = [];
+4410:         // The .html file itself is almost always big — it also contains the
+4411:         // whole rendered app UI (the DOM), which has nothing to do with the
+4412:         // cloud limit. What matters is the size of the compressed dataset
+4413:         // payload that would be written to Firestore (field limit ~1 MiB).
+4414:         let payloadBytes = 0;
+4415:         let payloadUnits = 0;
+4416: 
+4417:         /* LA SAUVEGARDE EST VALIDÉE AVANT D'ÊTRE ADOPTÉE. Le format d'aujourd'hui
+4418:            est un document JSON auto-descriptif ; les fichiers HTML déjà écrits
+4419:            restent lisibles (utils/backupFile.js). Un fichier tronqué, édité à la
+4420:            main, ou écrit par une version plus récente est REFUSÉ ICI, avec sa

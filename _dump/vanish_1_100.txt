@@ -1,0 +1,100 @@
+1: /* =========================================================================
+2:    _experiment_vanishing_test.mjs — « LE ESPERIENZE SPARISCONO DAL DATASET ».
+3: 
+4:    LE RAPPORT RÉPARÉ, mot pour mot : « anche nel dataset scientifico le
+5:    esperienze spariscono: sul Drive ci sono ancora le cartelle e i .json, ma nel
+6:    programma non ci sono più, e nessuno dice niente ».
+7: 
+8:    La cause : la liste des expériences vit ENTIÈRE dans le payload du dataset et
+9:    chaque enregistrement (automatique : 1,5 s après la dernière frappe, vidé à la
+10:    fermeture d'onglet) publie la liste telle qu'elle est en mémoire, d'un bloc.
+11:    Un poste qui a lu une copie plus ancienne publie donc une liste plus courte,
+12:    en silence — et rien ne le dit (il n'y a même pas de corbeille pour les
+13:    expériences).
+14: 
+15:    La réparation vérifiée ici, en PUR (src/utils/experimentTombstones.js) :
+16:      1. la LECTURE n'efface plus (`mergeExperimentsAddOnly`) ;
+17:      2. l'ÉCRITURE ne perd rien sans record (`protectUnrecordedDrops`, le verrou) ;
+18:      3. la SUPPRESSION est un record daté qui voyage, et un RETOUR volontaire le
+19:         lève (`withoutRevivedExperiments`) — sans quoi un autre poste, qui
+20:         détient encore l'expérience, la republierait.
+21:    Les vérifications de CÂBLAGE (App.jsx) suivent : une règle juste que personne
+22:    n'appelle ne répare rien.
+23:    ========================================================================= */
+24: import assert from 'node:assert/strict';
+25: import { readFileSync } from 'node:fs';
+26: import { register } from 'node:module';
+27: 
+28: register('./_esm_test_hook.mjs', import.meta.url);
+29: 
+30: /* Un localStorage de poche : le magasin du module (bloc « MAGASIN ») est lu et
+31:    écrit pour de vrai — c'est lui qui fait voyager une suppression d'une session
+32:    à l'autre sur le même poste. */
+33: const fakeStore = new Map();
+34: globalThis.localStorage = {
+35:   getItem: (k) => (fakeStore.has(k) ? fakeStore.get(k) : null),
+36:   setItem: (k, v) => { fakeStore.set(k, String(v)); },
+37:   removeItem: (k) => { fakeStore.delete(k); },
+38:   clear: () => fakeStore.clear(),
+39: };
+40: 
+41: const T = await import('./src/utils/experimentTombstones.js');
+42: const APP = readFileSync('./src/App.jsx', 'utf8').replace(/\r\n/g, '\n');
+43: const LOAD = readFileSync('./src/utils/loadSelection.js', 'utf8').replace(/\r\n/g, '\n');
+44: 
+45: let passed = 0;
+46: const eq = (actual, expected, what) => {
+47:   assert.deepEqual(actual, expected, `${what}\n  attendu : ${JSON.stringify(expected)}\n  obtenu  : ${JSON.stringify(actual)}`);
+48:   passed += 1;
+49: };
+50: const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
+51: const has = (src, needle, what) => {
+52:   assert.ok(String(src).includes(needle), `${what}\n  fragment absent : ${needle}`);
+53:   passed += 1;
+54: };
+55: const lacks = (src, needle, what) => {
+56:   assert.ok(!String(src).includes(needle), `${what}\n  fragment présent : ${needle}`);
+57:   passed += 1;
+58: };
+59: 
+60: const DS = 'ds1';
+61: const ids = (list) => (Array.isArray(list) ? list : []).map((t) => String(t.id));
+62: 
+63: /* ── 1. LE VERROU : une écriture ne perd que ce qui a un RECORD ─────────── */
+64: const A = { id: 't1', name: 'Aphids', datasetId: DS };
+65: const B = { id: 't2', name: 'Bees', datasetId: DS };
+66: const C = { id: 't3', name: 'Cicadas', datasetId: DS };
+67: 
+68: eq(ids(T.unrecordedDrops([A, B, C], [A, B], [])), ['t3'],
+69:   'l’expérience absente de la liste écrite ET sans record est repérée — les autres non');
+70: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], []).tests), ['t1', 't2', 't3'],
+71:   'la liste écrite GARDE l’expérience : rien ne disparaît sans record');
+72: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], []).rescued), ['t3'],
+73:   '…et le compte-rendu dit laquelle a été remise (au lieu de la taire)');
+74: eq(ids(T.protectUnrecordedDrops([A, B, C], [], []).tests), ['t1', 't2', 't3'],
+75:   'le scénario même du rapport — une liste VIDE — n’efface plus rien');
+76: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+77:   'une VRAIE suppression (record) passe : l’expérience reste dehors');
+78: eq(T.protectUnrecordedDrops([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).removed, 1,
+79:   '…et le retrait est compté quand la copie écrite portait encore une expérience supprimée ailleurs');
+80: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+81:   '…et l’expérience supprimée ailleurs sort de la copie écrite (son 🗑 voyage avec le dataset)');
+82: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], [{ id: 't3', datasetId: 'ds2', deletedAt: 5 }]).rescued), ['t3'],
+83:   'le record d’un AUTRE dataset ne peut pas faire disparaître cette expérience-ci');
+84: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], ['t3']).tests), ['t1', 't2'],
+85:   'un record écrit par une version ancienne (id seul) reste compris');
+86: eq(T.unrecordedDrops([A, B], [A, B], []).length, 0, 'une liste complète ne remet rien (aucun bruit)');
+87: eq(T.unrecordedDrops([{ name: 'sans id' }], [], []).map((t) => t.name), ['sans id'],
+88:   'une expérience SANS id est reconnue par son nom (elle est gardée elle aussi)');
+89: eq(T.unrecordedDrops([{ type: 'plate-9x9box', id: 'b1', name: 'Boîte 1' }], [], []).length, 1,
+90:   'une boîte de stockage entre dans la même règle (elle ne peut pas disparaître non plus)');
+91: eq(T.unrecordedDrops([{ note: 'rien' }], [], []).length, 0,
+92:   'une entrée sans id NI nom n’est pas « remise » (elle n’est pas identifiable)');
+93: 
+94: /* ── 2. LA LECTURE : adopter sans jamais effacer ────────────────────────── */
+95: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B], []).tests), ['t1', 't2', 't3'],
+96:   'une copie relue PLUS COURTE n’efface plus ce que ce poste connaît');
+97: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B], []).added), ['t3'],
+98:   '…et ce qui a été gardé est nommé (c’est le signe d’un autre poste en retard)');
+99: eq(ids(T.mergeExperimentsAddOnly([A], [A, B], []).tests), ['t1', 't2'],
+100:   'une copie relue PLUS LONGUE est adoptée telle quelle (rien à garder)');

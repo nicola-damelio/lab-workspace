@@ -17,7 +17,7 @@ import { storeJson, loadJson } from '../utils/pdbStore';
 import { loadProgress } from '../utils/loadProgress';
 import { abortControl } from '../utils/abortControl';
 import { yieldToPaint } from '../utils/backgroundWork';
-import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+import { archiveRestoreJson, downloadCloudFile, isRestoreFileName, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 /* 🧬 LA SOURCE DE LA STRUCTURE DU VIEWER (voir utils/dockingStructureSrc.js) :
    elle ne vient QUE du dataset — la page ne fabrique plus de protéine de
    démonstration (le `1UBQ` du RCSB apparaissait sur toute expérience neuve).
@@ -25,11 +25,11 @@ import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJson
    le repli qui ramène les PDB d'un import ancien, dont le dataset porte le lien
    mais que la base du navigateur n'a pas. */
 import { dockingStructureSrcOf } from '../utils/dockingStructureSrc';
-import { DOCKING_TOPOLOGY_EXTS, dockingTopologyExt, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from '../utils/dockingDeclaredFiles';
+import { DOCKING_TOPOLOGY_EXTS, dockingArchiveWanted, dockingTopologyExt, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from '../utils/dockingDeclaredFiles';
 /* 📂 LE DOSSIER DE L'EXPÉRIENCE COMME SOURCE (le pendant Docking des 📂 de la
    page MD) : `experimentFilePointer` rend le pointeur du fichier CHOISI, le
    composant partagé liste le dossier (voir DriveExperimentFiles.jsx). */
-import { experimentFilePointer } from '../utils/driveExperimentFiles';
+import { experimentFilePointer, listExperimentFiles } from '../utils/driveExperimentFiles';
 import { DriveExperimentFilePicker } from './DriveExperimentFiles';
 import { useDriveAutoRestore } from './useDriveAutoRestore';
 import { sequenceForMoleculeType, sequencePatchForMoleculeType, structureSequencePatch, sequenceNaturesNote } from '../utils/sequenceNatures';
@@ -472,7 +472,23 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
      (voir utils/dockingDeclaredFiles.js : dossier, `.gz` et extension
      ignorés), donc un fichier présent n'est jamais re-téléchargé. */
   const dockingDriveMissing = async () => {
-    if (!dockingHasMeta) return false; // aucun import : rien à restaurer
+    /* ── LE DATASET MUET (défaut « Test_86 », 15/10/2026) ────────────────────
+       Rien de déclaré (`dockingStructures`, `dockingMolecules`, `dockingDrive`
+       tous vides) : la page ne cherchait RIEN — pas même la copie de référence
+       restée dans SON dossier du Drive — et le viewer restait vide sans un mot.
+       La règle vit dans utils/dockingDeclaredFiles.dockingArchiveWanted (PURE) :
+       on cherche quand l'expérience porte une trace de docking ET que ce poste
+       n'a rien à montrer ; une page VIERGE (aucune trace) ne cherche pas. */
+    if (!dockingHasMeta) {
+      if (!dockingArchiveWanted({ test: activeTest })) return false;
+      const localStructs = await loadJson(dockingStructKey).catch(() => null);
+      const localMolecules = await loadJson(dockingMolKey).catch(() => null);
+      return dockingArchiveWanted({
+        test: activeTest,
+        structures: Array.isArray(localStructs) ? localStructs : [],
+        molecules: Array.isArray(localMolecules) ? localMolecules : []
+      });
+    }
     const structs = await loadJson(dockingStructKey).catch(() => null);
     const mols = await loadJson(dockingMolKey).catch(() => null);
     const hasStructs = Array.isArray(structs) && structs.length > 0;
@@ -501,7 +517,28 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
     return new TextDecoder('utf-8').decode(gz ? gunzipSync(bytes) : bytes);
   };
 
-  const restoreDockingFromDrive = async () => {
+  /* 📂 L'ARCHIVE, CHERCHÉE DANS LES DOSSIERS DE **CETTE** EXPÉRIENCE.
+     Le dataset ne déclare plus rien (voir dockingArchiveWanted) : il faut donc
+     retrouver `<instance>_docking_restore.json.gz` SANS le pointeur qui portait
+     son identifiant. La recherche par NOM de `restoreJsonFor` est ici ÉCARTÉE :
+     ce nom est celui de TOUTES les expériences (chaque `instance1` a la sienne),
+     elle rapatrierait l'archive d'une AUTRE. On lit donc le dossier — les MÊMES
+     branches que le 📂 « Topology from Drive folder », `Data/pdb files` (où
+     l'import ÉCRIT l'archive) d'abord — et le fichier trouvé est, par
+     construction, celui de cette expérience. `null` quand elle n'en a aucune. */
+  const dockingArchiveOfOwnFolders = async (stems) => {
+    const own = dockingDriveCtx(activeTest, activeTest.instanceName);
+    const listed = await listExperimentFiles({
+      ctx: { ...own, section: 'Setup', subsection: 'Structure' },
+      ctxs: [own, { ...own, subsection: 'Structure' }, { ...own, subsection: 'Docking' }],
+      exts: ['gz']
+    }).catch(() => null);
+    return ((listed && listed.files) || []).find((file) => stems.some((stem) => isRestoreFileName(
+      String((file && file.name) || ''), { stem, kind: DOCKING_RESTORE_KIND, suffix: DOCKING_RESTORE_KIND }
+    ))) || null;
+  };
+
+  const restoreDockingFromDrive = async ({ reason = 'auto' } = {}) => {
     /* ⏹📊 LA RESTAURATION SE RACONTE ET SE LAISSE ARRÊTER. Elle passe par
        `loadProgress` (la barre du haut du navigateur, TestShellRenderer) et
        s'enregistre dans `abortControl` : un dossier de 40 PDB se suit et
@@ -522,9 +559,16 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
     const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
       ? pointer.stems
       : dockingDefaultStems());
+    /* Un dataset MUET : l'archive est cherchée DANS les dossiers de
+       l'expérience, et la recherche par nom sur TOUT le Drive — le chemin des
+       datasets déclarés — reste éteinte (son nom est celui de toutes les
+       expériences). Voir dockingArchiveOfOwnFolders, juste au-dessus. */
+    const ownArchive = dockingHasMeta ? null : await dockingArchiveOfOwnFolders(stems);
     const found = await restoreJsonFor({
       kind: DOCKING_RESTORE_KIND, suffix: DOCKING_RESTORE_KIND, stems,
-      ctx: dockingDriveCtx(activeTest, activeTest.instanceName), pointer
+      ctx: dockingDriveCtx(activeTest, activeTest.instanceName),
+      pointer: pointer || ownArchive,
+      searchCloud: dockingHasMeta
     });
     const data = (found && found.data && typeof found.data === 'object') ? found.data : {};
     const archivedStructs = Array.isArray(data.structures) ? data.structures : [];
@@ -600,6 +644,12 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
       : '';
 
     if (!structs.length && !mols.length) {
+      /* UNE TENTATIVE SPÉCULATIVE QUI NE TROUVE RIEN SE TAIT : le dataset ne
+         déclarait rien, personne n'a rien demandé — annoncer « re-import the
+         calculation directory » serait un reproche inventé. Le message d'origine
+         reste intact quand le dataset DÉCLARAIT quelque chose, ou quand
+         l'utilisateur a cliqué (le bouton ⬇️ doit répondre, jamais rester muet). */
+      if (!dockingHasMeta && reason !== 'manual') return { ok: false, message: '' };
       /* Rien dans l'archive ET rien de téléchargeable par les liens déclarés :
          on le DIT, en nommant ce qui a échoué (les deux messages d'origine sont
          conservés mot pour mot — ils portent le geste à faire). */

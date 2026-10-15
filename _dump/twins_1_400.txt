@@ -1,0 +1,302 @@
+1: /* =========================================================================
+2:    _recover_twins_check.mjs — « LE ESPERIENZE RECUPERATE SPARISCONO DI NUOVO ».
+3: 
+4:    Vérifie, avec les VRAIS modules (src/utils/experimentTombstones.js,
+5:    src/utils/loadSelection.js) et les VRAIS fichiers de reprise (_recover/*.json),
+6:    pourquoi une expérience reprise revient puis repart EN SILENCE.
+7: 
+8:    FUITES VÉRIFIÉES (chacune s'imprime « FUITE CONFIRMÉE » si le code laisse faire) :
+9:      ② la fenêtre d'import propose « à ajouter » une expérience dont l'ID est déjà là ;
+10:      ③ l'ajout (➕) empile un jumeau (même id, autre nom) ;
+11:      ④ la relecture (`mergeExperimentsAddOnly`) lâche la ligne reprise, `added` vide
+12:         donc AUCUN dialogue — invisible à l'écran ;
+13:      ⑤ l'enregistrement (`protectUnrecordedDrops`) publie la copie sans elle, muet ;
+14:      ⑥ le 🗑 d'une des deux lignes de même id n'enregistre AUCUN record ;
+15:      ⑦ un record portant l'id retirerait les DEUX noms (le modèle n'a pas de place
+16:         pour « un des noms d'un id ») → ⑥ ne se répare pas en enregistrant l'id ;
+17:      ⑧ la levée (🛡) comparée à un `deletedAt` écrit par un poste dont l'horloge
+18:         avance : la copie écrite repart sans les expériences reprises.
+19: 
+20:    Sortie : rapport (stdout + _diag_twins.txt) ; code de sortie 0 = aucune fuite
+21:    (après réparation), 1 = au moins une fuite CONFIRMÉE (l'état d'aujourd'hui).
+22:    ========================================================================= */
+23: import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+24: import { register } from 'node:module';
+25: import LZString from 'lz-string';
+26: 
+27: register('./_esm_test_hook.mjs', import.meta.url);
+28: 
+29: /* Un localStorage de poche : le magasin des records est écrit pour de vrai. */
+30: const fakeStore = new Map();
+31: globalThis.localStorage = {
+32:   getItem: (k) => (fakeStore.has(k) ? fakeStore.get(k) : null),
+33:   setItem: (k, v) => { fakeStore.set(k, String(v)); },
+34:   removeItem: (k) => { fakeStore.delete(k); },
+35:   clear: () => fakeStore.clear(),
+36: };
+37: 
+38: const T = await import('./src/utils/experimentTombstones.js');
+39: const L = await import('./src/utils/loadSelection.js');
+40: 
+41: const out = [];
+42: const say = (line = '') => { out.push(line); console.log(line); };
+43: const HOLES = [];
+44: const leak = (label, detail, isLeak) => {
+45:   if (isLeak) { HOLES.push(label); say(`  ✘ FUITE — ${label}`); } else say(`  ✔ protégé — ${label}`);
+46:   if (detail) String(detail).split('\n').forEach((l) => say(`      ${l}`));
+47: };
+48: 
+49: /* Le payload d'un fichier de reprise est COMPRESSÉ (LZString) : un `grep` sur le
+50:    fichier ne voit ni id ni nom. */
+51: const decompress = (doc) => {
+52:   const raw = doc && doc.payload;
+53:   if (raw && typeof raw === 'object') return raw;
+54:   if (typeof raw !== 'string' || !raw) return null;
+55:   const tries = [() => LZString.decompressFromUTF16(raw), () => LZString.decompress(raw), () => raw];
+56:   for (const t of tries) {
+57:     try {
+58:       const s = t();
+59:       if (typeof s !== 'string' || !s) continue;
+60:       const p = JSON.parse(s);
+61:       if (p && typeof p === 'object') return p;
+62:     } catch { /* essai suivant */ }
+63:   }
+64:   return null;
+65: };
+66: 
+67: const files = readdirSync('_recover').filter((f) => f.toLowerCase().endsWith('.json'));
+68: const rescues = [];
+69: files.forEach((f) => {
+70:   let doc = null;
+71:   try { doc = JSON.parse(readFileSync(`_recover/${f}`, 'utf8')); } catch { return; }
+72:   const payload = decompress(doc);
+73:   const list = payload && (payload.tests || payload.plates);
+74:   if (!Array.isArray(list) || !list.length) return;
+75:   const date = (f.match(/(\d{4}-\d{2}-\d{2})/) || [])[1] || String(doc.savedAt || '');
+76:   rescues.push({
+77:     file: f,
+78:     date,
+79:     items: list.filter(Boolean).map((t) => ({ id: String(t.id || ''), name: String(t.name || '') })),
+80:   });
+81: });
+82: rescues.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+83: 
+84: say('═══════════════════════════════════════════════════════════════════════════');
+85: say('  EXPÉRIENCES REPRISES — pourquoi elles repartent (sur le vrai code)');
+86: say('═══════════════════════════════════════════════════════════════════════════');
+87: say('');
+88: say(`① LES FICHIERS DE REPRISE — ${rescues.length} fichier(s) portant une liste d'expériences`);
+89: const namesById = new Map();
+90: rescues.forEach((r) => {
+91:   const family = /experiences-retrouvees/i.test(r.file)
+92:     ? 'reprise du Drive'
+93:     : (/^RESTORE-/i.test(r.file) ? 'restauration ciblée' : 'autre');
+94:   say(`  ${r.date}  ${r.file}  → ${r.items.length} expérience(s)  [${family}]`);
+95:   r.items.forEach((t) => {
+96:     if (!namesById.has(t.id)) namesById.set(t.id, new Set());
+97:     namesById.get(t.id).add(t.name);
+98:   });
+99: });
+100: const renames = Array.from(namesById.entries()).filter(([, n]) => n.size > 1);
+101: say('');
+102: say(`  ⚠ ${renames.length} id(s) porté(s) par PLUSIEURS noms à travers les fichiers de reprise`);
+103: say('    (l\'objet du Drive garde l\'id de l\'expérience À TRAVERS SES RENOMMAGES) :');
+104: renames.forEach(([id, n]) => say(`      id=${id} → ${[...n].join(' / ')}`));
+105: /* LE SCÉNARIO, avec les données RÉELLES :
+106:    `file`   = la REPRISE DU JOUR — le fichier d'expériences retrouvées le plus
+107:               récent (« …experiences-retrouvees_<date>.json », l'export du Drive
+108:               qu'on applique à la fenêtre d'import) ;
+109:    `base`   = ce que le dataset porte DÉJÀ : TOUS les autres fichiers (les reprises
+110:               déjà appliquées + les restaurations ciblées RESTORE-*), dédoublonné
+111:               par NOM — c'est ainsi que l'écran identifie ses lignes. */
+112: const rescueLike = rescues.filter((r) => /experiences-retrouvees/i.test(r.file));
+113: const newest = (rescueLike.length ? rescueLike[rescueLike.length - 1] : rescues[rescues.length - 1]) || null;
+114: const applied = rescues.filter((r) => r !== newest);
+115: const byName = new Map();
+116: applied.flatMap((r) => r.items).forEach((t) => {
+117:   if (!byName.has(t.name)) byName.set(t.name, { ...t, datasetId: 'ds_sim' });
+118: });
+119: const base = Array.from(byName.values());
+120: const file = (newest ? newest.items : []).map((t) => ({ ...t, datasetId: 'ds_sim' }));
+121: say('');
+122: say(`  reprises déjà appliquées : ${applied.map((r) => r.date).join(', ') || '—'} → ${base.length} nom(s) dans le dataset`);
+123: say(`  reprise du jour : ${newest ? `${newest.date}  ${newest.file}` : '—'}`);
+124: say(`      ${file.map((t) => `« ${t.name} »`).join(', ')}`);
+125: 
+126: say('');
+127: say('② LA FENÊTRE D\'IMPORT — l\'identité d\'une ligne est le NOM (`testGroupKey`)');
+128: const rows = L.experimentRowChoices(file, base, false);
+129: const baseIds = new Set(base.map(T.experimentKey).filter(Boolean));
+130: const offered = [];
+131: rows.forEach((row) => {
+132:   const item = file.find((t) => L.testGroupKey(t) === row.key) || null;
+133:   const key = item ? T.experimentKey(item) : '';
+134:   const alreadyById = !!key && baseIds.has(key);
+135:   if (item) say(`  ligne « ${row.title} »  inBase=${row.inBase}  « à ajouter »=${!row.inBase}  id déjà dans le dataset=${alreadyById}`);
+136:   if (item && !row.inBase && alreadyById) offered.push(item);
+137: });
+138: leak('la fenêtre propose « à ajouter » une expérience dont l\'ID est DÉJÀ dans le dataset',
+139:   offered.length
+140:     ? offered.map((t) => `« ${t.name} » (${T.experimentKey(t)}) : même id qu'une ligne déjà présente, sous un autre nom`)
+141:       .join('\n')
+142:     : 'aucune ligne de ce fichier dans ce cas',
+143:   offered.length > 0);
+144: 
+145: say('');
+146: say('③ L\'AJOUT (➕) — le seul anti-jumeau de App.jsx compare des NOMS');
+147: /* Le code de App.jsx recopié MOT POUR MOT (voir l\'ajout des lignes du fichier). */
+148: const existingKeys = new Set(base.map(L.testGroupKey).filter(Boolean));
+149: const freshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+150: const newTests = [];
+151: file.forEach((p) => {
+152:   const key = L.testGroupKey(p);
+153:   if (key && existingKeys.has(key)) return;   // déjà là : jamais deux fois
+154:   if (key) existingKeys.add(key);
+155:   newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });
+156: });
+157: const screen = base.concat(newTests);
+158: const byId = new Map();
+159: screen.forEach((t) => {
+160:   const k = T.experimentKey(t);
+161:   if (!k) return;
+162:   if (!byId.has(k)) byId.set(k, []);
+163:   byId.get(k).push(t.name);
+164: });
+165: const stacked = Array.from(byId.entries()).filter(([, names]) => names.length > 1);
+166: say(`  ${newTests.length}/${file.length} ligne(s) empilée(s) ; ${stacked.length} id(s) portent maintenant PLUSIEURS lignes :`);
+167: stacked.forEach(([id, names]) => say(`      ${id} → ${names.join(' + ')}`));
+168: leak('l\'ajout empile une SECONDE ligne portant le même id d\'expérience',
+169:   stacked.map(([id, names]) => `${id} : ${names.join(' + ')}`).join('\n'),
+170:   stacked.length > 0);
+171: /* LA MÉMOIRE DU POSTE — App.jsx 2009-2018 : une Map par dataset, clé = experimentKey
+172:    (donc l'ID) : UNE SEULE entrée par id, la dernière vue gagne. */
+173: const remember = (list) => {
+174:   const map = new Map();
+175:   list.forEach((t) => { const k = T.experimentKey(t); if (k) map.set(k, t); });
+176:   return Array.from(map.values());
+177: };
+178: 
+179: /* La copie PARTAGÉE, écrite par un poste qui n'a pas encore vu la reprise. */
+180: const staleCopy = base.slice();
+181: const rescuedNames = newTests.map((t) => t.name);
+182: 
+183: say('');
+184: say('④ LA RELECTURE (🔄 Refresh, réouverture) — `mergeExperimentsAddOnly` (garde ID-keyée)');
+185: /* La copie relue est adoptée PAR ID (experimentTombstones.js : `list.concat(added)`) : une
+186:    ligne de la copie qui porte le MÊME id qu'une ligne reprise CHASSE celle-ci de l'écran.
+187:    Et `added`, la seule chose que la relecture DIT, ne nomme que ce qu'elle a GARDÉ : la ligne
+188:    qui part n'est donc nommée nulle part — ni par le dialogue, ni par l'écran. */
+189: const mergedRead = T.mergeExperimentsAddOnly(remember(screen), staleCopy, []);
+190: const lostOnRead = rescuedNames.filter((n) => !mergedRead.tests.some((t) => t.name === n));
+191: const saidOnRead = mergedRead.added.length ? `« ${mergedRead.added.map((t) => t.name).join(' », « ')} »` : '';
+192: say(`  lignes à l'écran : ${screen.length} avant la relecture → ${mergedRead.tests.length} après`);
+193: say(`  ce que la relecture GARDE (added — la seule chose qu'elle DIT) : ${saidOnRead || '(rien)'}`);
+194: say(`    → ${saidOnRead ? "le dialogue ne parle que de ces lignes-là, jamais de celles qui ont quitté l'écran" : 'added vide : aucun dialogue'}`);
+195: say(`  expériences reprises ABSENTES de l'écran : ${lostOnRead.length ? lostOnRead.join(', ') : '—'}`);
+196: leak('la relecture REMPLACE la ligne reprise par celle de MÊME ID portée par la copie (son nom d\'avant) : elle quitte l\'écran SANS ÊTRE NOMMÉE',
+197:   lostOnRead.length
+198:     ? `${lostOnRead.join(', ')} — la copie relue porte leur ID sous un autre nom : le verrou croit la ligne « déjà là »`
+199:     : '',
+200:   lostOnRead.length > 0);
+201: /* Le cas le plus favorable : la mémoire ne porte QUE ce que la reprise vient d'ajouter
+202:    (App.jsx, `rememberExperiments(targetId, newTests)`) — même là, l'id est déjà dans
+203:    la copie relue : rien n'est gardé. */
+204: const mergedFresh = T.mergeExperimentsAddOnly(remember(newTests), staleCopy, []);
+205: const lostEvenFresh = rescuedNames.filter((n) => !mergedFresh.tests.some((t) => t.name === n));
+206: leak('…et la mémoire la plus fraîche (celle de la reprise elle-même) ne les garde pas non plus',
+207:   lostEvenFresh.join(', '),
+208:   lostEvenFresh.length > 0);
+209: 
+210: say('');
+211: say('⑤ L\'ENREGISTREMENT AUTOMATIQUE (1,5 s après la dernière frappe) — `protectUnrecordedDrops` (garde ID-keyée)');
+212: /* App.jsx écrit l'ÉCRAN (`latestDataRef.current.tests`), pas une copie : la garde compare donc
+213:    la MÉMOIRE du poste (clé = id) à la liste affichée. Deux moments comptent. */
+214: const writtenBefore = T.protectUnrecordedDrops(remember(screen), screen, []);
+215: say(`  ① avant toute relecture — l'écran porte encore les jumeaux :`);
+216: say(`     rescued=${writtenBefore.rescued.length}  removed=${writtenBefore.removed}`
+217:   + `  lignes écrites=${writtenBefore.tests.length}/${screen.length}`
+218:   + `${stacked.length ? ` — la copie PART avec ${stacked.length} id(s) en DOUBLE` : ''}`);
+219: const writtenAfter = T.protectUnrecordedDrops(remember(mergedRead.tests), mergedRead.tests, []);
+220: const lostOnWrite = rescuedNames.filter((n) => !writtenAfter.tests.some((t) => t.name === n));
+221: const saidOnWrite = writtenAfter.rescued.length ? `« ${writtenAfter.rescued.map((t) => t.name).join(' », « ')} »` : '';
+222: say(`  ② après la relecture — l'écran EST la liste relue :`);
+223: say(`     rescued=${writtenAfter.rescued.length}${saidOnWrite ? ` (à propos de ${saidOnWrite})` : ''}`
+224:   + `  removed=${writtenAfter.removed} → `
+225:   + `${(!writtenAfter.rescued.length && !writtenAfter.removed) ? 'le verrou rend la main SANS UN MOT' : 'il parle'}`);
+226: say(`     expériences reprises ABSENTES de la copie écrite : ${lostOnWrite.length ? lostOnWrite.join(', ') : '—'}`);
+227: leak('l\'enregistrement publie la liste d\'APRÈS relecture — donc SANS les lignes reprises — et n\'en dit rien',
+228:   lostOnWrite.length
+229:     ? `${lostOnWrite.join(', ')} — pour la garde l\'ID est dans la liste écrite (via l\'autre nom) : rien à reprendre, donc rien à dire`
+230:     : '',
+231:   lostOnWrite.length > 0 && !writtenAfter.rescued.length && !writtenAfter.removed);
+232: say('');
+233: say('⑥ LE GESTE 🗑 SUR LA LIGNE REPRISE (l\'une des deux lignes de même id)');
+234: const twinEntry = stacked[0] || null;
+235: if (twinEntry) {
+236:   const twinKey = twinEntry[0];
+237:   const rowsOfId = screen.filter((t) => T.experimentKey(t) === twinKey);
+238:   const rescuedRow = rowsOfId[rowsOfId.length - 1];
+239:   fakeStore.clear();
+240:   T.recordExperimentDeletions(screen, screen.filter((t) => t !== rescuedRow), 'ds_sim', 1000);
+241:   const records = T.loadExperimentDeletions();
+242:   say(`  lignes de ${twinKey} : ${rowsOfId.map((t) => `« ${t.name} »`).join(' + ')} — 🗑 sur « ${rescuedRow.name} »`);
+243:   say(`  records enregistrés pour ce geste : ${records.length}`);
+244:   leak('supprimer une ligne dont le jumeau porte le même ID n\'enregistre AUCUN record',
+245:     records.length ? '' : 'l\'ID « survit » via le jumeau → la suppression est INDISTINGUABLE d\'une perte (le verrou la reprendra)',
+246:     records.length === 0);
+247: 
+248:   say('');
+249:   say('⑦ …ET ⑥ NE SE RÉPARE PAS EN ENREGISTRANT L\'ID : le record est ID-keyé');
+250:   const idOnly = String(rescuedRow.id || '');
+251:   const kept = T.withoutDeletedExperiments(rowsOfId, [{ id: idOnly, datasetId: 'ds_sim', deletedAt: 1000 }]);
+252:   say(`  un record sur ${idOnly} retirerait : ${rowsOfId.map((t) => `« ${t.name} »`).join(' + ')} → `
+253:     + `${kept.length} ligne(s) restante(s) (il en faut 1)`);
+254:   leak('un record portant l\'id retire AUSSI le nom qui n\'était pas visé',
+255:     `${rowsOfId.length} ligne(s) → ${kept.length} : le modèle n\'a pas de place pour « un des noms d\'un id »`,
+256:     rowsOfId.length > 1 && kept.length === 0);
+257: 
+258:   say('');
+259:   say('⑧ LA LEVÉE (🛡 `recordExperimentRevivals`) — deux dates, DEUX HORLOGES DE POSTES');
+260:   fakeStore.clear();
+261:   const T0 = 1_700_000_000_000;
+262:   /* Le VRAI geste (App.jsx:1969) : `recordExperimentDeletions(prev, next, …)` —
+263:      la ligne ÉTAIT là, elle n'y est plus. `before` non vide, sinon
+264:      experimentTombstones.js:442 rend la main sans rien enregistrer. */
+265:   T.recordExperimentDeletions([{ id: idOnly, name: rescuedRow.name, datasetId: 'ds_sim' }], [], 'ds_sim', T0);
+266:   const del = T.deletionsForDataset(T.loadExperimentDeletions(), 'ds_sim');
+267:   const rev = T.recordExperimentRevivals([{ id: idOnly, name: rescuedRow.name, datasetId: 'ds_sim' }], 'ds_sim', T0 - 60_000).revivals;
+268:   const standing = T.withoutRevivedExperiments(del, T.revivalsForDataset(rev, 'ds_sim'));
+269:   const written = T.withoutDeletedExperiments([{ id: idOnly, name: rescuedRow.name, datasetId: 'ds_sim' }], standing);
+270:   say(`  suppression enregistrée à +0 s, levée écrite à −60 s (horloge du poste en retard) → `
+271:     + `suppression qui tient : ${standing.length} ; lignes écrites : ${written.length}`);
+272:   leak('la levée ne bat pas une suppression écrite 60 s « plus tard » par un autre poste',
+273:     written.length ? '' : 'la copie écrite repart SANS l\'expérience reprise : le verrou d\'écriture la reprend au premier enregistrement',
+274:     standing.length > 0 && written.length === 0);
+275: } else {
+276:   say('  (aucun id empilé dans les fichiers disponibles : rien à éprouver ici)');
+277: }
+278: 
+279: say('');
+280: say('═══════════════════════════════════════════════════════════════════════════');
+281: if (HOLES.length) {
+282:   say(`  ${HOLES.length} FUITE(S) CONFIRMÉE(S) — une expérience reprise peut repartir en SILENCE :`);
+283:   HOLES.forEach((h) => say(`    ✘ ${h}`));
+284:   say('');
+285:   say('  LE FIL COMMUN : DEUX IDENTITÉS QUI NE S\'ACCORDENT PAS.');
+286:   say('    · l\'ÉCRAN et l\'import (➕) identifient une expérience par son NOM (`testGroupKey`) ;');
+287:   say('    · les GARDES (relecture, verrou d\'écriture, 🗑) l\'identifient par son ID (`experimentKey`).');
+288:   say('    La reprise ramène les noms d\'aujourd\'hui avec les ids d\'un autre nom (« Test 87 » ≡ « pdb_ » ≡');
+289:   say('    « pdb_CDK2_CyclinA »), donc l\'ajout empile un jumeau, et les gardes — elles — croient la ligne');
+290:   say('    reprise « déjà là » : elles la lâchent sans un mot, et l\'enregistrement automatique publie ce vide.');
+291: } else {
+292:   say('  Aucune fuite : une expérience reprise ne peut plus repartir en silence.');
+293: }
+294: say('═══════════════════════════════════════════════════════════════════════════');
+295: 
+296: writeFileSync('_diag_twins.txt', out.join('\n'), 'utf8');
+297: console.log('\n→ rapport écrit : _diag_twins.txt');
+298: process.exitCode = HOLES.length ? 1 : 0;
+299: 
+300: 
+301: 
+302: 

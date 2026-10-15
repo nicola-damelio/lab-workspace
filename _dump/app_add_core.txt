@@ -1,0 +1,69 @@
+4868: 
+4869:       // NOTE: the Figures & Slides image LIBRARY is not handled here — it is
+4870:       // merged (never replaced) for BOTH modes, together with the papers, see
+4871:       // the `mergeLibraryFromSnapshot` call at the end of this function.
+4872:     } else if (mode === 'append') {
+4873:       /* ➕ L'EXPÉRIENCE REVIENT AVEC SON ID D'ORIGINE — c'est tout l'intérêt du
+4874:          retour chirurgical : un id NEUF (ce que ce mode faisait) laissait le lien
+4875:          du projet (`project.experiments[].testId`) dans le vide et son dossier
+4876:          Drive orphelin, si bien qu'il fallait re-lier à la main ET supprimer les
+4877:          jumeaux. Une expérience que ce dataset porte DÉJÀ (même id ou même nom —
+4878:          la règle d'identité du programme) est simplement ÉCARTÉE : un
+4879:          chargement n'empile jamais un jumeau. Un essai sans id (entrée écrite
+4880:          par une version ancienne) en reçoit un : sans id, rien ne pourrait plus
+4881:          le reconnaître. */
+4882:       const existingKeys = new Set(
+4883:         (Array.isArray(testsRef.current) ? testsRef.current : []).map(testGroupKey).filter(Boolean)
+4884:       );
+4885:       const freshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+4886:       const newTests = [];
+4887:       loadedTests.forEach((p) => {
+4888:         const key = testGroupKey(p);
+4889:         if (key && existingKeys.has(key)) return;      // déjà là : jamais deux fois
+4890:         if (key) existingKeys.add(key);
+4891:         newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });
+4892:       });
+4893:       /* Le retour est VOLONTAIRE : les suppressions de ces expériences sont
+4894:          LEVÉES (datées), sinon le verrou d'écriture les reprendrait — un autre
+4895:          poste les avait peut-être supprimées, et c'est justement ce qu'on défait
+4896:          ici (voir recordExperimentRevivals, experimentTombstones.js). */
+4897:       if (newTests.length) {
+4898:         try { recordExperimentRevivals(newTests, targetId); } catch { /* magasin indisponible */ }
+4899:         rememberExperiments(targetId, newTests);
+4900:       }
+4901:       /* Ce qui est arrivé SE DIT : combien sont revenues (et avec leur id), et
+4902:          combien ont été laissées de côté parce qu'elles étaient déjà là — un
+4903:          ajout qui « ne fait rien » pour une expérience déjà présente ne doit pas
+4904:          ressembler à une panne. */
+4905:       if (newTests.length < loadedTests.length) {
+4906:         experimentRestoreNote = `${loadedTests.length - newTests.length} experiment(s) of this file were ALREADY in this `
+4907:           + 'dataset (same name or same id): they were left alone — a load never stacks twins. '
+4908:           + `${newTests.length} came back WITH THEIR ORIGINAL ID, so their Project link and their Drive folder are found again.`;
+4909:       } else if (newTests.length) {
+4910:         experimentRestoreNote = `${newTests.length} experiment(s) came back WITH THEIR ORIGINAL ID: their Project link and `
+4911:           + 'their Drive folder are found again — nothing to re-link by hand.';
+4912:       }
+4913: 
+4914:       setTests((prev) => [...prev, ...newTests]);
+4915: 
+4916:       /* Les projets du fichier sont ADOPTÉS par ce dataset, comme en mode
+4917:          « remplacer » (voir importProjectsFromFile) : sans cela ils restaient
+4918:          étiquetés à leur dataset d'origine — écrits sur ce poste, invisibles
+4919:          ici. En AJOUT, ce que ce dataset a DÉJÀ garde SA version : on n'ajoute
+4920:          que ce qui manque — la même écriture qu'avant, mais qui ne peut plus
+4921:          échouer en silence (voir describeProjectWriteRefusal, appelé plus bas). */
+4922:       let restore = { ok: true, error: '', adopted: [], skippedDeleted: [] };
+4923:       if (Array.isArray(s.projects) && s.projects.length) {
+4924:         restore = importProjectsFromFile(s.projects, { datasetId: targetId, replace: false });
+4925:       }
+4926:       /* La même vérité qu'en mode « remplacer » : un projet du fichier qui n'est
+4927:          pas arrivé (il a une tombe) est DIT — un import muet laisse croire à une
+4928:          panne (il est vrai que les projets déjà présents, eux, sont bien là) —
+4929:          et une écriture refusée par le magasin se dit avec la même phrase. */
+4930:       projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;
+4931:       projectRestoreNote = describeProjectWriteRefusal(restore) || projectRestoreNote;
+4932: 
+4933:       if (newTests.length > 0) {
+4934:         setActiveTestId(newTests[0].id);
+4935:       }
+4936: 

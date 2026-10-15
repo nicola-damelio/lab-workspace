@@ -1,0 +1,79 @@
+﻿1: /* =========================================================================
+52: /** Clés localStorage des records (écrites par le magasin de ce module). */
+53: export const DELETED_EXPERIMENTS_KEY = 'labWorkspace_deletedExperiments';
+54: export const REVIVED_EXPERIMENTS_KEY = 'labWorkspace_revivedExperiments';
+56: /** Nombre de records conservés (les plus récents). Une suppression n'est jamais
+59: export const MAX_RECORDS = 500;
+61: const idOf = (x) => {
+66: const nameOf = (x) => (x && typeof x === 'object'
+70: const datasetOf = (x) => String(
+74: /** L'identité d'une EXPÉRIENCE : son id, sinon son nom. Rien de reconnaissable
+77: export const experimentKey = (test) => {
+84: /** L'ID seul d'une expérience ('' quand elle n'en a pas) — l'identité qui TRAVERSE
+90: export const experimentId = (test) => idOf(test);
+92: /** La clé d'un RECORD : `<datasetId>::<id>` (ou `<datasetId>::#<nom>` quand le
+95: export const recordKey = (entry) => {
+102: /** Une liste HORODATÉE propre et utilisable (suppressions comme levées) : les
+109: const normalizeStamped = (list, field) => {
+134: export const normalizeDeletions = (list) => normalizeStamped(list, 'deletedAt');
+135: export const normalizeRevivals = (list) => normalizeStamped(list, 'revivedAt');
+137: /** Enregistrer la suppression d'une expérience (la plus récente en tête). */
+138: export const addDeletion = (deletions, test, deletedAt = Date.now()) => {
+149: /** Enregistrer le RETOUR d'une expérience (levée de suppression, datée). */
+150: export const addRevival = (revivals, test, revivedAt = Date.now()) => {
+161: /** Retirer la levée d'une expérience : une SUPPRESSION postérieure doit
+163: export const withoutRevival = (revivals, test) => {
+170: /** La RÈGLE d'identité d'un record, une seule fois : même id (ou même nom quand
+173: const sameStamped = (a, b) => {
+182: /** LES SUPPRESSIONS QUI TIENNENT ENCORE : celles qu'aucune levée plus récente
+185: export const withoutRevivedExperiments = (deletions, revivals) => {
+194: /** Les records tels qu'un PAYLOAD les porte : un record sans dataset appartient
+196: const forDataset = (list, norm, datasetArg) => {
+201: export const deletionsForDataset = (list, datasetArg) => forDataset(list, normalizeDeletions, datasetArg);
+202: export const revivalsForDataset = (list, datasetArg) => forDataset(list, normalizeRevivals, datasetArg);
+204: /* ---------------------------------------------------------------------------
+208: /** Cette expérience a-t-elle une suppression ENREGISTRÉE (et non levée) ? */
+209: export const isExperimentDeleted = (test, deletions) => {
+215: /** La liste sans les expériences dont la suppression est enregistrée. */
+216: export const withoutDeletedExperiments = (tests, deletions) => {
+223: /* ---------------------------------------------------------------------------
+232: /** Les expériences qu'une écriture FERAIT DISPARAÎTRE SANS AUCUN RECORD.
+239: export const unrecordedDrops = (known, outgoing, deletions) => {
+253: /** La liste à écrire, corrigée : rien de ce qui n'est pas supprimé ne peut
+260: export const protectUnrecordedDrops = (known, outgoing, deletions) => {
+284: /** ⛔ LE MÊME VERROU, VU DE L'AUTRE CÔTÉ DU FIL — « la copie PARTAGÉE qu'on
+305: export const protectDistantDrops = (distant, outgoing, deletions) => {
+325: /** L'id d'une entrée SANS id : le seul cadeau que ce module se permet
+327: const defaultFreshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+329: /** UN ID, UNE LIGNE — l'effondrement des JUMEAUX écrits par une version
+343: export const collapseExperimentTwins = (tests) => {
+358: /** CE QUI ENTRE À L'ÉCRAN QUAND ON APPLIQUE UNE COPIE (➕ « Add the selected
+378: export const experimentsToAdd = (current, incoming, makeId) => {
+400: /** UNE LECTURE N'EFFACE PLUS : la copie relue (`incoming`) est adoptée telle
+422: export const mergeExperimentsAddOnly = (current, incoming, deletions) => {
+478: /* ---------------------------------------------------------------------------
+482: const namesOf = (list) => (Array.isArray(list) ? list : [])
+488: /** Le compte-rendu d'un ENREGISTREMENT qui a failli perdre des expériences. */
+489: export const describeUnrecordedDrops = (rescued) => (
+499: /** Le compte-rendu du verrou à DISTANCE : la copie partagée portait des
+503: export const describeDistantRescue = (rescued) => (
+513: /** Le compte-rendu d'une LECTURE qui a gardé des expériences absentes de la copie relue. */
+514: export const describeKeptExperiments = (added) => (
+522: /** Le compte-rendu des expériences retirées parce que leur suppression est
+524: export const describeRemovedExperiments = (count) => (
+530: /* ---------------------------------------------------------------------------
+534: const storeOf = () => {
+542: const readStored = (key, norm) => {
+552: const writeStored = (key, list) => {
+559: export const loadExperimentDeletions = () => readStored(DELETED_EXPERIMENTS_KEY, normalizeDeletions);
+560: export const loadExperimentRevivals = () => readStored(REVIVED_EXPERIMENTS_KEY, normalizeRevivals);
+561: export const saveExperimentDeletions = (list) => writeStored(DELETED_EXPERIMENTS_KEY, normalizeDeletions(list));
+562: export const saveExperimentRevivals = (list) => writeStored(REVIVED_EXPERIMENTS_KEY, normalizeRevivals(list));
+564: /** ADOPTER les suppressions portées par une copie (payload du dataset,
+568: export const adoptExperimentDeletions = (list) =>
+571: /** ADOPTER les levées portées par une copie (même règle). */
+572: export const adoptExperimentRevivals = (list) =>
+575: /** LE GESTE : tout ce qui a disparu entre `before` et `after` par une ACTION de
+579: export const recordExperimentDeletions = (before, after, datasetArg, deletedAt = Date.now()) => {
+596: /** LE RETOUR VOLONTAIRE : une restauration (📂 Load HTML → restauration ciblée
+600: export const recordExperimentRevivals = (list, datasetArg, revivedAt = Date.now()) => {

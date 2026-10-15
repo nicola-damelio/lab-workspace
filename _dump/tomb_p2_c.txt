@@ -1,0 +1,71 @@
+130:     .sort((a, b) => b[field] - a[field])
+131:     .slice(0, MAX_RECORDS);
+132: };
+133: 
+134: export const normalizeDeletions = (list) => normalizeStamped(list, 'deletedAt');
+135: export const normalizeRevivals = (list) => normalizeStamped(list, 'revivedAt');
+136: 
+137: /** Enregistrer la suppression d'une expérience (la plus récente en tête). */
+138: export const addDeletion = (deletions, test, deletedAt = Date.now()) => {
+139:   const entry = {
+140:     id: idOf(test),
+141:     name: nameOf(test),
+142:     datasetId: datasetOf(test),
+143:     deletedAt: Number(deletedAt) || Date.now()
+144:   };
+145:   if (!recordKey(entry)) return normalizeDeletions(deletions);
+146:   return normalizeDeletions([entry, ...(Array.isArray(deletions) ? deletions : [])]);
+147: };
+148: 
+149: /** Enregistrer le RETOUR d'une expérience (levée de suppression, datée). */
+150: export const addRevival = (revivals, test, revivedAt = Date.now()) => {
+151:   const entry = {
+152:     id: idOf(test),
+153:     name: nameOf(test),
+154:     datasetId: datasetOf(test),
+155:     revivedAt: Number(revivedAt) || Date.now()
+156:   };
+157:   if (!recordKey(entry)) return normalizeRevivals(revivals);
+158:   return normalizeRevivals([entry, ...(Array.isArray(revivals) ? revivals : [])]);
+159: };
+160: 
+161: /** Retirer la levée d'une expérience : une SUPPRESSION postérieure doit
+162:  *  l'emporter (« 🗑 » après une restauration est une vraie suppression). */
+163: export const withoutRevival = (revivals, test) => {
+164:   const wanted = { id: idOf(test), name: nameOf(test), datasetId: datasetOf(test) };
+165:   const key = recordKey(wanted);
+166:   if (!key) return normalizeRevivals(revivals);
+167:   return normalizeRevivals(revivals).filter((r) => recordKey(r) !== key);
+168: };
+169: 
+170: /** La RÈGLE d'identité d'un record, une seule fois : même id (ou même nom quand
+171:  *  l'un des deux n'a pas d'id), et un dataset absent d'un côté au moins (ou
+172:  *  identique) — un record sans dataset vaut partout. */
+173: const sameStamped = (a, b) => {
+174:   if (!a || !b) return false;
+175:   const aId = idOf(a);
+176:   const bId = idOf(b);
+177:   const sameName = !!nameOf(a) && nameOf(a) === nameOf(b);
+178:   if (!(aId && bId ? aId === bId : sameName)) return false;
+179:   return !a.datasetId || !b.datasetId || a.datasetId === b.datasetId;
+180: };
+181: 
+182: /** LES SUPPRESSIONS QUI TIENNENT ENCORE : celles qu'aucune levée plus récente
+183:  *  (ou de même date) n'a annulées. C'est la seule lecture des suppressions
+184:  *  d'expériences — lever une suppression est donc vu de partout d'un coup. */
+185: export const withoutRevivedExperiments = (deletions, revivals) => {
+186:   const lifted = normalizeRevivals(revivals);
+187:   const records = normalizeDeletions(deletions);
+188:   if (!lifted.length) return records;
+189:   return records.filter((d) => !lifted.some(
+190:     (r) => sameStamped(r, d) && (Number(r.revivedAt) || 0) >= (Number(d.deletedAt) || 0)
+191:   ));
+192: };
+193: 
+194: /** Les records tels qu'un PAYLOAD les porte : un record sans dataset appartient
+195:  *  au dataset qui l'a écrit (le payload d'un dataset ne parle que de lui). */
+196: const forDataset = (list, norm, datasetArg) => {
+197:   const datasetId = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
+198:   return norm(list).map((r) => (!r.datasetId && datasetId ? { ...r, datasetId } : r));
+199: };
+200: 

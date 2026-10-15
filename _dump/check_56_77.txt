@@ -1,0 +1,22 @@
+﻿  for (const t of tries) {
+    try {
+      const s = t();
+      if (typeof s !== 'string' || !s) continue;
+      const p = JSON.parse(s);
+      if (p && typeof p === 'object') return p;
+    } catch { /* essai suivant */ }
+  }
+  return null;
+};
+
+const files = readdirSync('_recover').filter((f) => f.toLowerCase().endsWith('.json'));
+const rescues = [];
+files.forEach((f) => {
+  let doc = null;
+  try { doc = JSON.parse(readFileSync(`_recover/${f}`, 'utf8')); } catch { return; }
+  const payload = decompress(doc);
+  const list = payload && (payload.tests || payload.plates);
+  if (!Array.isArray(list) || !list.length) return;
+  const date = (f.match(/(\d{4}-\d{2}-\d{2})/) || [])[1] || String(doc.savedAt || '');
+  rescues.push({
+    file: f,

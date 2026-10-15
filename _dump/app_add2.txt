@@ -1,0 +1,51 @@
+4910:         experimentRestoreNote = `${newTests.length} experiment(s) came back WITH THEIR ORIGINAL ID: their Project link and `
+4911:           + 'their Drive folder are found again — nothing to re-link by hand.';
+4912:       }
+4913: 
+4914:       setTests((prev) => [...prev, ...newTests]);
+4915: 
+4916:       /* Les projets du fichier sont ADOPTÉS par ce dataset, comme en mode
+4917:          « remplacer » (voir importProjectsFromFile) : sans cela ils restaient
+4918:          étiquetés à leur dataset d'origine — écrits sur ce poste, invisibles
+4919:          ici. En AJOUT, ce que ce dataset a DÉJÀ garde SA version : on n'ajoute
+4920:          que ce qui manque — la même écriture qu'avant, mais qui ne peut plus
+4921:          échouer en silence (voir describeProjectWriteRefusal, appelé plus bas). */
+4922:       let restore = { ok: true, error: '', adopted: [], skippedDeleted: [] };
+4923:       if (Array.isArray(s.projects) && s.projects.length) {
+4924:         restore = importProjectsFromFile(s.projects, { datasetId: targetId, replace: false });
+4925:       }
+4926:       /* La même vérité qu'en mode « remplacer » : un projet du fichier qui n'est
+4927:          pas arrivé (il a une tombe) est DIT — un import muet laisse croire à une
+4928:          panne (il est vrai que les projets déjà présents, eux, sont bien là) —
+4929:          et une écriture refusée par le magasin se dit avec la même phrase. */
+4930:       projectRestoreNote = describeProjectRestore(s.projects) || projectRestoreNote;
+4931:       projectRestoreNote = describeProjectWriteRefusal(restore) || projectRestoreNote;
+4932: 
+4933:       if (newTests.length > 0) {
+4934:         setActiveTestId(newTests[0].id);
+4935:       }
+4936: 
+4937:       if (s.customCmpds !== undefined) {
+4938:         setCustomCmpds((prev) => [...new Set([...prev, ...s.customCmpds])]);
+4939:       }
+4940: 
+4941:       if (s.customCellLines !== undefined) {
+4942:         setCustomCellLines((prev) => [...new Set([...prev, ...s.customCellLines])]);
+4943:       }
+4944: 
+4945:       if (s.customConc !== undefined) {
+4946:         setCustomConc((prev) => ({ ...prev, ...s.customConc }));
+4947:       }
+4948: 
+4949:       if (s.cmpColors !== undefined) {
+4950:         setCmpColors((prev) => ({ ...prev, ...s.cmpColors }));
+4951:       }
+4952: 
+4953:       if (s.customFields !== undefined) {
+4954:         setCustomFields((prev) => {
+4955:           const incoming = normalizeCustomFields(s.customFields);
+4956:           const existingIds = new Set(prev.map((f) => f.id));
+4957:           const additions = incoming.filter((f) => !existingIds.has(f.id));
+4958:           return [...prev, ...additions];
+4959:         });
+4960:       }

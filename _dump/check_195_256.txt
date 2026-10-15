@@ -1,0 +1,62 @@
+﻿say(`  expériences reprises ABSENTES de l'écran : ${lostOnRead.length ? lostOnRead.join(', ') : '—'}`);
+leak('la relecture REMPLACE la ligne reprise par celle de MÊME ID portée par la copie (son nom d\'avant) : elle quitte l\'écran SANS ÊTRE NOMMÉE',
+  lostOnRead.length
+    ? `${lostOnRead.join(', ')} — la copie relue porte leur ID sous un autre nom : le verrou croit la ligne « déjà là »`
+    : '',
+  lostOnRead.length > 0);
+/* Le cas le plus favorable : la mémoire ne porte QUE ce que la reprise vient d'ajouter
+   (App.jsx, `rememberExperiments(targetId, newTests)`) — même là, l'id est déjà dans
+   la copie relue : rien n'est gardé. */
+const mergedFresh = T.mergeExperimentsAddOnly(remember(newTests), staleCopy, []);
+const lostEvenFresh = rescuedNames.filter((n) => !mergedFresh.tests.some((t) => t.name === n));
+leak('…et la mémoire la plus fraîche (celle de la reprise elle-même) ne les garde pas non plus',
+  lostEvenFresh.join(', '),
+  lostEvenFresh.length > 0);
+
+say('');
+say('⑤ L\'ENREGISTREMENT AUTOMATIQUE (1,5 s après la dernière frappe) — `protectUnrecordedDrops` (garde ID-keyée)');
+/* App.jsx écrit l'ÉCRAN (`latestDataRef.current.tests`), pas une copie : la garde compare donc
+   la MÉMOIRE du poste (clé = id) à la liste affichée. Deux moments comptent. */
+const writtenBefore = T.protectUnrecordedDrops(remember(screen), screen, []);
+say(`  ① avant toute relecture — l'écran porte encore les jumeaux :`);
+say(`     rescued=${writtenBefore.rescued.length}  removed=${writtenBefore.removed}`
+  + `  lignes écrites=${writtenBefore.tests.length}/${screen.length}`
+  + `${stacked.length ? ` — la copie PART avec ${stacked.length} id(s) en DOUBLE` : ''}`);
+const writtenAfter = T.protectUnrecordedDrops(remember(mergedRead.tests), mergedRead.tests, []);
+const lostOnWrite = rescuedNames.filter((n) => !writtenAfter.tests.some((t) => t.name === n));
+const saidOnWrite = writtenAfter.rescued.length ? `« ${writtenAfter.rescued.map((t) => t.name).join(' », « ')} »` : '';
+say(`  ② après la relecture — l'écran EST la liste relue :`);
+say(`     rescued=${writtenAfter.rescued.length}${saidOnWrite ? ` (à propos de ${saidOnWrite})` : ''}`
+  + `  removed=${writtenAfter.removed} → `
+  + `${(!writtenAfter.rescued.length && !writtenAfter.removed) ? 'le verrou rend la main SANS UN MOT' : 'il parle'}`);
+say(`     expériences reprises ABSENTES de la copie écrite : ${lostOnWrite.length ? lostOnWrite.join(', ') : '—'}`);
+leak('l\'enregistrement publie la liste d\'APRÈS relecture — donc SANS les lignes reprises — et n\'en dit rien',
+  lostOnWrite.length
+    ? `${lostOnWrite.join(', ')} — pour la garde l\'ID est dans la liste écrite (via l\'autre nom) : rien à reprendre, donc rien à dire`
+    : '',
+  lostOnWrite.length > 0 && !writtenAfter.rescued.length && !writtenAfter.removed);
+say('');
+say('⑥ LE GESTE 🗑 SUR LA LIGNE REPRISE (l\'une des deux lignes de même id)');
+const twinEntry = stacked[0] || null;
+if (twinEntry) {
+  const twinKey = twinEntry[0];
+  const rowsOfId = screen.filter((t) => T.experimentKey(t) === twinKey);
+  const rescuedRow = rowsOfId[rowsOfId.length - 1];
+  fakeStore.clear();
+  T.recordExperimentDeletions(screen, screen.filter((t) => t !== rescuedRow), 'ds_sim', 1000);
+  const records = T.loadExperimentDeletions();
+  say(`  lignes de ${twinKey} : ${rowsOfId.map((t) => `« ${t.name} »`).join(' + ')} — 🗑 sur « ${rescuedRow.name} »`);
+  say(`  records enregistrés pour ce geste : ${records.length}`);
+  leak('supprimer une ligne dont le jumeau porte le même ID n\'enregistre AUCUN record',
+    records.length ? '' : 'l\'ID « survit » via le jumeau → la suppression est INDISTINGUABLE d\'une perte (le verrou la reprendra)',
+    records.length === 0);
+
+  say('');
+  say('⑦ …ET ⑥ NE SE RÉPARE PAS EN ENREGISTRANT L\'ID : le record est ID-keyé');
+  const idOnly = String(rescuedRow.id || '');
+  const kept = T.withoutDeletedExperiments(rowsOfId, [{ id: idOnly, datasetId: 'ds_sim', deletedAt: 1000 }]);
+  say(`  un record sur ${idOnly} retirerait : ${rowsOfId.map((t) => `« ${t.name} »`).join(' + ')} → `
+    + `${kept.length} ligne(s) restante(s) (il en faut 1)`);
+  leak('un record portant l\'id retire AUSSI le nom qui n\'était pas visé',
+    `${rowsOfId.length} ligne(s) → ${kept.length} : le modèle n\'a pas de place pour « un des noms d\'un id »`,
+    rowsOfId.length > 1 && kept.length === 0);

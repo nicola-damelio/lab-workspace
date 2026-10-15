@@ -1,0 +1,282 @@
+1: /* =========================================================================
+2:    _experiment_vanishing_test.mjs — « LE ESPERIENZE SPARISCONO DAL DATASET ».
+3: 
+4:    LE RAPPORT RÉPARÉ, mot pour mot : « anche nel dataset scientifico le
+5:    esperienze spariscono: sul Drive ci sono ancora le cartelle e i .json, ma nel
+6:    programma non ci sono più, e nessuno dice niente ».
+7: 
+8:    La cause : la liste des expériences vit ENTIÈRE dans le payload du dataset et
+9:    chaque enregistrement (automatique : 1,5 s après la dernière frappe, vidé à la
+10:    fermeture d'onglet) publie la liste telle qu'elle est en mémoire, d'un bloc.
+11:    Un poste qui a lu une copie plus ancienne publie donc une liste plus courte,
+12:    en silence — et rien ne le dit (il n'y a même pas de corbeille pour les
+13:    expériences).
+14: 
+15:    La réparation vérifiée ici, en PUR (src/utils/experimentTombstones.js) :
+16:      1. la LECTURE n'efface plus (`mergeExperimentsAddOnly`) ;
+17:      2. l'ÉCRITURE ne perd rien sans record (`protectUnrecordedDrops`, le verrou) ;
+18:      3. la SUPPRESSION est un record daté qui voyage, et un RETOUR volontaire le
+19:         lève (`withoutRevivedExperiments`) — sans quoi un autre poste, qui
+20:         détient encore l'expérience, la republierait.
+21:    Les vérifications de CÂBLAGE (App.jsx) suivent : une règle juste que personne
+22:    n'appelle ne répare rien.
+23:    ========================================================================= */
+24: import assert from 'node:assert/strict';
+25: import { readFileSync } from 'node:fs';
+26: import { register } from 'node:module';
+27: 
+28: register('./_esm_test_hook.mjs', import.meta.url);
+29: 
+30: /* Un localStorage de poche : le magasin du module (bloc « MAGASIN ») est lu et
+31:    écrit pour de vrai — c'est lui qui fait voyager une suppression d'une session
+32:    à l'autre sur le même poste. */
+33: const fakeStore = new Map();
+34: globalThis.localStorage = {
+35:   getItem: (k) => (fakeStore.has(k) ? fakeStore.get(k) : null),
+36:   setItem: (k, v) => { fakeStore.set(k, String(v)); },
+37:   removeItem: (k) => { fakeStore.delete(k); },
+38:   clear: () => fakeStore.clear(),
+39: };
+40: 
+41: const T = await import('./src/utils/experimentTombstones.js');
+42: const APP = readFileSync('./src/App.jsx', 'utf8').replace(/\r\n/g, '\n');
+43: const LOAD = readFileSync('./src/utils/loadSelection.js', 'utf8').replace(/\r\n/g, '\n');
+44: 
+45: let passed = 0;
+46: const eq = (actual, expected, what) => {
+47:   assert.deepEqual(actual, expected, `${what}\n  attendu : ${JSON.stringify(expected)}\n  obtenu  : ${JSON.stringify(actual)}`);
+48:   passed += 1;
+49: };
+50: const ok = (cond, what) => { assert.ok(cond, what); passed += 1; };
+51: const has = (src, needle, what) => {
+52:   assert.ok(String(src).includes(needle), `${what}\n  fragment absent : ${needle}`);
+53:   passed += 1;
+54: };
+55: const lacks = (src, needle, what) => {
+56:   assert.ok(!String(src).includes(needle), `${what}\n  fragment présent : ${needle}`);
+57:   passed += 1;
+58: };
+59: 
+60: const DS = 'ds1';
+61: const ids = (list) => (Array.isArray(list) ? list : []).map((t) => String(t.id));
+62: 
+63: /* ── 1. LE VERROU : une écriture ne perd que ce qui a un RECORD ─────────── */
+64: const A = { id: 't1', name: 'Aphids', datasetId: DS };
+65: const B = { id: 't2', name: 'Bees', datasetId: DS };
+66: const C = { id: 't3', name: 'Cicadas', datasetId: DS };
+67: 
+68: eq(ids(T.unrecordedDrops([A, B, C], [A, B], [])), ['t3'],
+69:   'l’expérience absente de la liste écrite ET sans record est repérée — les autres non');
+70: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], []).tests), ['t1', 't2', 't3'],
+71:   'la liste écrite GARDE l’expérience : rien ne disparaît sans record');
+72: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], []).rescued), ['t3'],
+73:   '…et le compte-rendu dit laquelle a été remise (au lieu de la taire)');
+74: eq(ids(T.protectUnrecordedDrops([A, B, C], [], []).tests), ['t1', 't2', 't3'],
+75:   'le scénario même du rapport — une liste VIDE — n’efface plus rien');
+76: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+77:   'une VRAIE suppression (record) passe : l’expérience reste dehors');
+78: eq(T.protectUnrecordedDrops([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).removed, 1,
+79:   '…et le retrait est compté quand la copie écrite portait encore une expérience supprimée ailleurs');
+80: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+81:   '…et l’expérience supprimée ailleurs sort de la copie écrite (son 🗑 voyage avec le dataset)');
+82: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], [{ id: 't3', datasetId: 'ds2', deletedAt: 5 }]).rescued), ['t3'],
+83:   'le record d’un AUTRE dataset ne peut pas faire disparaître cette expérience-ci');
+84: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], ['t3']).tests), ['t1', 't2'],
+85:   'un record écrit par une version ancienne (id seul) reste compris');
+86: eq(T.unrecordedDrops([A, B], [A, B], []).length, 0, 'une liste complète ne remet rien (aucun bruit)');
+87: eq(T.unrecordedDrops([{ name: 'sans id' }], [], []).map((t) => t.name), ['sans id'],
+88:   'une expérience SANS id est reconnue par son nom (elle est gardée elle aussi)');
+89: eq(T.unrecordedDrops([{ type: 'plate-9x9box', id: 'b1', name: 'Boîte 1' }], [], []).length, 1,
+90:   'une boîte de stockage entre dans la même règle (elle ne peut pas disparaître non plus)');
+91: eq(T.unrecordedDrops([{ note: 'rien' }], [], []).length, 0,
+92:   'une entrée sans id NI nom n’est pas « remise » (elle n’est pas identifiable)');
+93: 
+94: /* ── 2. LA LECTURE : adopter sans jamais effacer ────────────────────────── */
+95: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B], []).tests), ['t1', 't2', 't3'],
+96:   'une copie relue PLUS COURTE n’efface plus ce que ce poste connaît');
+97: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B], []).added), ['t3'],
+98:   '…et ce qui a été gardé est nommé (c’est le signe d’un autre poste en retard)');
+99: eq(ids(T.mergeExperimentsAddOnly([A], [A, B], []).tests), ['t1', 't2'],
+100:   'une copie relue PLUS LONGUE est adoptée telle quelle (rien à garder)');
+101: eq(ids(T.mergeExperimentsAddOnly([A], [A, B], []).added), [], '…sans bruit');
+102: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+103:   'ce qui a été supprimé reste supprimé, même porté par la mémoire du poste');
+104: eq(ids(T.mergeExperimentsAddOnly([C], [A, B], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+105:   'une relecture ne RESSUSCITE pas une expérience supprimée');
+106: eq(T.mergeExperimentsAddOnly([A], [A], []).tests[0], A,
+107:   'la copie relue fait foi pour ce qu’elle porte (la version gardée vient du poste)');
+108: 
+109: /* ── 3. LA SUPPRESSION EST UNE DONNÉE (et un retour la lève) ────────────── */
+110: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: DS, deletedAt: 5 }], []).length, 1,
+111:   'sans levée, la suppression tient');
+112: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: DS, deletedAt: 5 }], [{ id: 't3', datasetId: DS, revivedAt: 6 }]).length, 0,
+113:   'une levée PLUS RÉCENTE annule la suppression (l’expérience restaurée revient)');
+114: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: DS, deletedAt: 6 }], [{ id: 't3', datasetId: DS, revivedAt: 5 }]).length, 1,
+115:   'supprimer APRÈS avoir restauré supprime pour de bon');
+116: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: 'ds2', deletedAt: 5 }], [{ id: 't3', datasetId: DS, revivedAt: 9 }]).length, 1,
+117:   'la levée d’un AUTRE dataset ne lève pas celle-ci');
+118: eq(T.withoutRevivedExperiments([{ name: 'Cicadas', deletedAt: 5 }], [{ name: 'Cicadas', datasetId: DS, revivedAt: 6 }]).length, 0,
+119:   'un record sans id se lit par le nom (vestige d’une version ancienne)');
+120: eq(ids(T.withoutDeletedExperiments([A, B, C], [{ id: 't2', datasetId: DS, deletedAt: 1 }])), ['t1', 't3'],
+121:   'withoutDeletedExperiments écarte par id');
+122: eq(T.isExperimentDeleted({ name: 'Bees' }, [{ id: 't9', name: 'Bees', deletedAt: 1 }]), true,
+123:   'une expérience sans id est reconnue par son nom');
+124: eq(T.isExperimentDeleted({ id: 't2', name: 'Bees' }, [{ name: 'Bees', deletedAt: 1 }]), true,
+125:   'un record sans id reconnaît l’expérience de ce nom');
+126: eq(T.isExperimentDeleted({ id: 't2', name: 'Autre' }, [{ id: 't2', name: 'Bees', deletedAt: 1 }]), true,
+127:   'l’id prime sur le nom (une expérience renommée reste supprimée)');
+128: 
+129: /* ── 4. LE MAGASIN : le geste laisse un record, la restauration le lève ─── */
+130: fakeStore.clear();
+131: T.recordExperimentDeletions([A, B, C], [A, B], DS, 1000);
+132: eq(T.loadExperimentDeletions().map((r) => r.id), ['t3'], 'le geste 🗑 laisse la suppression de CE qui a disparu');
+133: eq(T.isExperimentDeleted(C, T.loadExperimentDeletions()), true, '…et le verrou la reconnaît');
+134: T.recordExperimentRevivals([C], DS, 2000);
+135: eq(T.withoutRevivedExperiments(T.loadExperimentDeletions(), T.loadExperimentRevivals()).length, 0,
+136:   'la restauration volontaire lève la suppression (sinon le verrou reprendrait l’expérience restaurée)');
+137: T.recordExperimentDeletions([A, B, C], [A, B], DS, 3000);
+138: eq(T.withoutRevivedExperiments(T.loadExperimentDeletions(), T.loadExperimentRevivals()).length, 1,
+139:   'supprimer à nouveau, APRÈS la restauration, supprime pour de bon');
+140: T.adoptExperimentDeletions([{ id: 't7', name: 'Sept', datasetId: DS, deletedAt: 4 }]);
+141: eq(T.isExperimentDeleted({ id: 't7', datasetId: DS }, T.loadExperimentDeletions()), true,
+142:   'adopter les records d’une copie (un autre poste a supprimé) vaut ici aussi');
+143: eq(T.normalizeDeletions(['t1', { id: 't1', datasetId: DS, deletedAt: 9 }, { datasetId: DS, deletedAt: 2 }]).length, 2,
+144:   'les records sont normalisés : dédoublonnés par identité, ceux sans identité écartés');
+145: eq(T.describeUnrecordedDrops([]), '', 'aucune perte réparée → aucune phrase (le cas normal reste muet)');
+146: ok(T.describeUnrecordedDrops([C]).includes('KEPT'), 'une perte réparée SE DIT');
+147: ok(T.describeKeptExperiments([C]).includes('Cicadas'), 'ce qui a été gardé à la relecture est nommé');
+148: ok(T.describeRemovedExperiments(2).includes('2'), 'ce qui a été retiré par un record est compté');
+149: 
+150: /* ── 5. LE CÂBLAGE : le verrou est DANS les chemins, pas dans une page ──── */
+151: has(APP, "} from './utils/experimentTombstones';",
+152:   'App.jsx importe le verrou des expériences (une règle juste que personne n’appelle ne répare rien)');
+153: has(APP, 'deletedExperiments: loadExperimentDeletions(),',
+154:   'la suppression d’une expérience VOYAGE avec le payload du dataset');
+155: eq(APP.split('rawData.tests = guardExperimentsForWrite(rawData.tests);').length - 1, 2,
+156:   'l’enregistrement automatique ET la sortie du dataset passent par le verrou (les deux seuls points d’écriture)');
+157: has(APP, 'recordExperimentDeletions(prev, next, currentDatasetIdRef.current);',
+158:   'le GESTE (🗑, undo/redo…) laisse sa suppression enregistrée — c’est ce qui distingue une suppression d’une perte');
+159: has(APP, 'const merged = mergeExperimentsAddOnly(',
+160:   'une RELECTURE (ouverture, 🔄 Refresh) est en AJOUT SEUL : elle n’efface plus');
+161: has(APP, 'adoptDatasetExperimentRecords(dset);',
+162:   'les records portés par la copie relue sont adoptés (une suppression d’un autre poste vaut ici)');
+163: has(APP, 'rememberExperiments(currentDatasetId, tests);',
+164:   'ce que l’écran montre est RETENU : la mémoire du poste est la base du verrou');
+165: has(APP, 'protectUnrecordedDrops(knownExperimentsOf(datasetId), list, deletions)',
+166:   'la liste écrite est corrigée AVANT de partir');
+167: has(APP, 'describeUnrecordedDrops(out.rescued)',
+168:   'un sauvetage SE DIT (un enregistrement muet était le défaut)');
+169: has(APP, 'forgetExperiments(targetId, loadedTests);',
+170:   'un REMPLACEMENT volontaire (♻️) est le seul geste qui vide la mémoire du poste');
+171: lacks(APP, 'const newTests = loadedTests.map((p) => ({',
+172:   'l’ajout ne donne plus un id NEUF à chaque copie (le défaut qui perdait lien de projet et dossier Drive)');
+173: has(APP, 'newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });',
+174:   'l’ajout CONSERVE l’id d’origine de l’expérience restaurée');
+175: has(APP, 'if (key && existingKeys.has(key)) return;',
+176:   'une expérience que le dataset porte déjà n’entre jamais deux fois (aucun jumeau à supprimer)');
+177: has(APP, 'recordExperimentRevivals(newTests, targetId);',
+178:   'un retour volontaire LÈVE la suppression (sinon le verrou reprendrait l’expérience restaurée)');
+179: has(APP, 'const testRowPicks = (rowsPicked && Array.isArray(rowsPicked[TESTS_SECTION_ID]))',
+180:   'le dataset scientifique a lui aussi une sélection LIGNE À LIGNE');
+181: has(APP, 'pickExperimentRows(allLoadedTests, testRowPicks)',
+182:   '…et elle réduit la page cochée à ce qui est coché');
+183: has(APP, 'const sciRows = experimentRowChoices(loadedTests, testsRef.current, false);',
+184:   'la fenêtre d’import d’un dataset scientifique PROPOSE ces lignes');
+185: has(APP, 'const testRows = experimentRowChoices(pendingLoad.tests, pendingLoad.baseTests, false);',
+186:   'le memo des lignes lit la liste COURANTE dans `pendingLoad` (photographiée par loadHTML) — et non `testsRef`, déclarée 250 lignes plus bas : un memo s’exécute PENDANT le rendu, la lire là levait « Cannot access \'testsRef\' before initialization » à l’ouverture de 📂 Load backup');
+187: has(APP, 'baseTests: testsRef.current,',
+188:   '…et c’est le GESTE (loadHTML, après le rendu) qui photographie cette liste');
+189: lacks(APP, 'experimentRowChoices(pendingLoad.tests, testsRef.current',
+190:   'aucun memo ne lit une ref déclarée plus bas (la porte _tdz_scan_test.mjs tient le reste)');
+191: has(APP, 'experimentRestoreNote',
+192:   'ce qui est revenu — et ce qui était déjà là — est DIT après l’import');
+193: 
+194: /* ── 6. LE RECUPERO « CHIRURGICO » : des lignes dans loadSelection.js ───── */
+195: has(LOAD, "export const TESTS_SECTION_ID = 'data:tests';",
+196:   'la page « Expériences / Tests » a son identifiant de lignes');
+197: has(LOAD, 'export const experimentRowChoices = (incomingTests, baseTests, merging = false) => {',
+198:   '…et ses lignes se calculent en PUR (loadSelection.js, testable)');
+199: has(LOAD, 'export const pickExperimentRows = (tests, picks) => {',
+200:   'l’application du choix ligne à ligne est pure elle aussi');
+201: has(LOAD, 'export const testGroupKey = (t) => {',
+202:   'l’identité d’une ligne est le NOM (la règle des pages du dataset)');
+203: has(LOAD, "import { experimentKey } from './experimentTombstones';",
+204:   'l’identité de repli est IMPORTÉE du verrou (une seule définition, jamais deux)');
+205: 
+206: const L = await import('./src/utils/loadSelection.js');
+207: const C1 = { id: 't1', name: 'Aphids', projectNames: ['GEC'], operator: 'Nicola', date: '2026-01-05' };
+208: const C2 = { id: 't2', name: 'Aphids', projectNames: ['GEC'], operator: 'Nicola', date: '2026-01-06' };
+209: const C3 = { id: 't3', name: 'Bees', projectNames: ['GEC'] };
+210: 
+211: const rows = L.experimentRowChoices([C1, C2, C3], [C3], false);
+212: eq(rows.length, 2, 'trois entrées, deux essais : DEUX lignes (une expérience = un nom avec ses conditions)');
+213: eq(rows[0].key, 'name:Aphids', 'la ligne porte le NOM de l’essai — la règle des pages du dataset');
+214: ok(rows[0].sub.includes('2 conditions'), 'la ligne dit combien de conditions elle ramène');
+215: ok(rows[0].sub.includes('GEC'), '…et le projet de l’expérience, pour la reconnaître');
+216: eq(rows[0].inBase, false, 'l’essai que le dataset ne porte pas n’est pas dit « déjà là »');
+217: eq(rows[1].inBase, true, 'celui qu’il porte l’est (une seule de ses conditions suffit)');
+218: eq(rows[0].picked, true, 'par défaut TOUT est coché : le seul défaut sûr pour les DEUX boutons');
+219: eq(L.pickExperimentRows([C1, C2, C3], ['name:Aphids']).map((t) => t.id), ['t1', 't2'],
+220:   'cocher une ligne ramène l’essai ENTIER (ses conditions) — et son id d’origine');
+221: eq(L.pickExperimentRows([C1, C2, C3], ['name:Bees']).map((t) => t.id), ['t3'],
+222:   'ne ramener QUE l’expérience perdue : c’est le geste chirurgical demandé');
+223: eq(L.pickExperimentRows([C1, C2, C3], []).length, 0, 'rien de coché : rien ne part');
+224: eq(L.experimentRowChoices([{ name: 'Senza id', condition: 1 }], [{ name: 'Senza id' }], false)[0].inBase, true,
+225:   'une entrée sans id est reconnue par son nom (règle d’identité partagée avec le verrou)');
+226: const rowsMerge = L.experimentRowChoices([C3], [C3], true);
+227: eq([rowsMerge[0].locked, rowsMerge[0].picked], [true, false],
+228:   'en fusion, une expérience déjà là est verrouillée et décochée (rien ne s’empile)');
+229: const anon = L.experimentRowChoices([{ note: 'x' }], [], false);
+230: eq([anon[0].key, anon[0].noIdentity], ['#row:0', true],
+231:   'une entrée sans identité fait une ligne à elle, reconnaissable à sa POSITION');
+232: eq(L.pickExperimentRows([{ note: 'x' }], ['#row:0']).length, 1, '…et elle se coche comme les autres');
+233: eq(L.testGroupKey({ name: 'Aphids', id: 't9' }), 'name:Aphids',
+234:   'le nom prime sur l’id pour le REGROUPEMENT (deux conditions = une ligne)');
+235: 
+236: /* ── 7. LA FENÊTRE DU DATASET SCIENTIFIQUE PORTE SES LIGNES ───────────────
+237:    LE RAPPORT, mot pour mot : « il load backup non é chirurgico, non mi
+238:    permette di selezionare i singoli tests ». Les lignes existaient, PURES et
+239:    testées ci-dessus, et `confirmLoad` savait déjà les appliquer — mais la
+240:    fenêtre d'un dataset SCIENTIFIQUE ne les recevait pas (`<LoadPickPanel>`
+241:    sans `rows`) et ses deux boutons appelaient `confirmLoad('append')` /
+242:    `confirmLoad('replace')` SANS le troisième argument (`loadRows`) : la
+243:    sélection cochée sous « ▸ lines » était jetée. Le retour d'UNE expérience
+244:    redevient le geste demandé — une ligne = une expérience, ses conditions
+245:    comprises, son id d'origine compris. */
+246: eq(APP.split('rows={loadRowChoices}').length - 1, 2,
+247:   'les DEUX fenêtres (base d’administration ET dataset scientifique) reçoivent les lignes — une seule source, jamais deux listes');
+248: eq(APP.split('onToggleRow={toggleLoadRow}').length - 1, 2,
+249:   '…et les deux branchent la même case à cocher (aucune ligne inerte)');
+250: eq(APP.split('onPickRows={pickLoadRows}').length - 1, 2,
+251:   '…et le même « all / none » de page (les DEUX niveaux remis à leur défaut)');
+252: has(APP, "confirmLoad('append', undefined, loadRows)",
+253:   '« ➕ Add the selected elements » applique la sélection ligne à ligne (sans ce 3e argument elle était jetée)');
+254: has(APP, "confirmLoad('replace', undefined, loadRows)",
+255:   '« 🔄 Replace the selected elements » aussi — les deux gestes voient la MÊME sélection');
+256: has(APP, "confirmLoad('replace', defaultSelection(loadSections), null)",
+257:   '« 🔄 Import everything » reste le seul geste SANS sélection par ligne (tout le contenu du fichier)');
+258: lacks(APP, "confirmLoad('append')",
+259:   'plus aucun geste n’oublie la sélection : c’est le bug « non é chirurgico »');
+260: lacks(APP, "confirmLoad('replace')",
+261:   '…ni le remplacement (les deux boutons de la fenêtre portent les lignes)');
+262: 
+263: /* La chaîne complète, en PUR : les lignes de la fenêtre → la clé cochée → les
+264:    essais qui partent. C'est la relecture du geste, de bout en bout, sans
+265:    navigateur. */
+266: const missing = L.experimentRowChoices([C1, C2, C3], [C3], false).find((r) => !r.inBase);
+267: eq(missing && missing.key, 'name:Aphids',
+268:   'la ligne de l’expérience perdue est celle que rien ne marque « already in the base »');
+269: eq(L.pickExperimentRows([C1, C2, C3], [missing.key]).map((t) => [t.id, t.name]),
+270:   [['t1', 'Aphids'], ['t2', 'Aphids']],
+271:   'cette ligne part ENTIÈRE (ses deux conditions) et avec ses IDS D’ORIGINE — lien de projet et dossier Drive retrouvés');
+272: eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)
+273:   .filter((r) => r.picked).map((r) => r.key)).map((t) => t.id), ['t1', 't2', 't3'],
+274:   'le DÉFAUT de la fenêtre (TOUT coché) laisse les deux boutons faire exactement ce qu’ils faisaient : rien de perdu');
+275: eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)
+276:   .filter((r) => r.picked && !r.inBase).map((r) => r.key)).map((t) => t.id), ['t1', 't2'],
+277:   '…et ne cocher que ce qui MANQUE (ce que dit la ligne « already in the base ») ne ramène que ça');
+278: 
+279: /* ── Bilan ─────────────────────────────────────────────────────────────── */
+280: console.log(`_experiment_vanishing_test.mjs — ${passed} assertions OK (le esperienze non spariscono più: lettura in aggiunta, scrittura sotto verrou, e il ritorno di UNA esperienza da una copia è CHIRURGICO — una riga per esperienza, con il suo id)`);
+281: 
+282: 

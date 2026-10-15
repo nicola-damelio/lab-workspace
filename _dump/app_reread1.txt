@@ -1,0 +1,101 @@
+4380:       if (storedOnDrive) return;
+4381: 
+4382:       setBackupStatus(
+4383:         getDriveToken() && currentDatasetId
+4384:           ? { state: 'error', msg: '⚠️ Enregistrement Drive impossible — copie locale téléchargée' }
+4385:           : { state: 'skip', msg: '💾 Google Drive non connecté — copie locale téléchargée' }
+4386:       );
+4387: 
+4388:       downloadSnapshot(snapshotText, snapshotName);
+4389:     } catch (e) {
+4390:       setDialog({
+4391:         type: 'alert',
+4392:         title: 'Save Failed',
+4393:         message: 'Could not save the dataset snapshot: ' + e.message
+4394:       });
+4395:     }
+4396:   };
+4397: 
+4398:   const loadHTML = (e) => {
+4399:     const file = e.target.files && e.target.files[0];
+4400: 
+4401:     if (!file) return;
+4402: 
+4403:     const reader = new FileReader();
+4404: 
+4405:     reader.onload = (ev) => {
+4406:       try {
+4407:         const text = ev.target.result;
+4408:         let s = null;
+4409:         let loadedTests = [];
+4410:         // The .html file itself is almost always big — it also contains the
+4411:         // whole rendered app UI (the DOM), which has nothing to do with the
+4412:         // cloud limit. What matters is the size of the compressed dataset
+4413:         // payload that would be written to Firestore (field limit ~1 MiB).
+4414:         let payloadBytes = 0;
+4415:         let payloadUnits = 0;
+4416: 
+4417:         /* LA SAUVEGARDE EST VALIDÉE AVANT D'ÊTRE ADOPTÉE. Le format d'aujourd'hui
+4418:            est un document JSON auto-descriptif ; les fichiers HTML déjà écrits
+4419:            restent lisibles (utils/backupFile.js). Un fichier tronqué, édité à la
+4420:            main, ou écrit par une version plus récente est REFUSÉ ICI, avec sa
+4421:            raison : l'import ne s'ouvre donc jamais sur une copie amputée. */
+4422:         const parsedBackup = parseBackupText(text);
+4423: 
+4424:         if (parsedBackup.ok) {
+4425:           const dataBlob = parsedBackup.doc;
+4426:           const pStr = String((dataBlob && dataBlob.payload) || '');
+4427: 
+4428:           // Exact UTF-8 byte size of the compressed payload (what Firestore
+4429:           // sees for its ~1 MiB field limit), plus the save routine's own
+4430:           // budget metric (length × 3, a strict upper bound) that decides when
+4431:           // heavy data gets stripped from the live cloud copy.
+4432:           try {
+4433:             payloadBytes = new TextEncoder().encode(pStr).length;
+4434:           } catch {
+4435:             payloadBytes = pStr.length * 3;
+4436:           }
+4437:           payloadUnits = pStr.length * 3;
+4438: 
+4439:           s = parsedBackup.state;
+4440: 
+4441:           /* ❗ D'OÙ VIENT CE FICHIER — « Import everything » écrit DANS SON
+4442:              dataset, il n'en recrée pas un neuf. Les sauvegardes récentes le
+4443:              disent elles-mêmes (`datasetId`, à côté du titre et de la date) ;
+4444:              les plus anciennes se lisent dans leurs PROJETS, qui portent
+4445:              l'étiquette du dataset d'où ils ont été exportés. `filterLoadState`
+4446:              conserve toujours cet identifiant (voir son commentaire) : c'est lui
+4447:              qui décide du dataset de destination. Sans cette relecture, chaque
+4448:              restauration créait un dataset neuf et les projets — étiquetés à
+4449:              l'ancien — restaient invisibles : le bug « les expériences
+4450:              reviennent, les projets non ». */
+4451:           const fileDatasetId = dataBlob.datasetId || fileDatasetIdOf(s.projects);
+4452:           if (fileDatasetId) s.id = fileDatasetId;
+4453: 
+4454:           loadedTests = s.tests || s.plates || [];
+4455: 
+4456:           /* Une sauvegarde d’une base d’administration (payload { administration:
+4457:              … }) n’a pas d’expériences : elle est restaurée telle quelle. */
+4458:           const isAdminLoad = !!s && typeof s.administration === 'object'
+4459:             && s.administration !== null
+4460:             && !Array.isArray(s.tests) && !Array.isArray(s.plates);
+4461:           if (isAdminLoad) {
+4462:             /* Éléments importables de la base (une page = une collection) :
+4463:                l’utilisateur peut n’en restaurer qu’une partie. */
+4464:             const sections = loadSectionsOf(s, true);
+4465:             setPendingLoad({
+4466:               tests: [],
+4467:               fullState: s,
+4468:               isAdmin: true,
+4469:               sections,
+4470:               adminTitle: dataBlob && (dataBlob.title || ''),
+4471:               adminSubtitle: dataBlob && (dataBlob.subtitle || ''),
+4472:             });
+4473:             setLoadPick(defaultSelection(sections));
+4474:             /* LES LIGNES AUSSI partent de leur défaut : en fusion, ce que la
+4475:                base ouverte n’a pas encore. Le fichier ouvre donc la fenêtre
+4476:                « prête à ne rien dupliquer » — et tout est visible, ligne à
+4477:                ligne, avant de cliquer. La base qui fait foi est relue ICI (et
+4478:                non par `loadMergeBase`) : `pendingLoad` n’est pas encore posé. */
+4479:             const baseAtOpen = (currentDatasetId && isAdministrationKind(activeDatasetKind)
+4480:               && adminContent && typeof adminContent === 'object') ? adminContent : null;

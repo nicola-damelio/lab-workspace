@@ -67,6 +67,47 @@ export const dockingTopologyExt = (name = '') => {
   return ['cif', 'mol2', 'sdf'].includes(ext) ? ext : 'pdb';
 };
 
+/** LES TRACES D'UN DOCKING DANS L'EXPÉRIENCE — le programme, ses images, ses
+ *  poses, les résultats CAPRI. Ce sont les SEULS signes qui survivent à la perte
+ *  des métadonnées de FICHIERS (`dockingStructures`, `dockingMolecules` et le
+ *  pointeur `dockingDrive`) : la page les écrit dès qu'un run est importé, et le
+ *  document du dataset les porte encore quand le reste a disparu. */
+export const DOCKING_HISTORY_FIELDS = ['dockingProgram', 'dockingImages', 'dockingResults', 'dockingPoses', 'dockingCapri'];
+
+/** Vrai quand `test` garde AU MOINS une trace de docking : un champ non vide
+ *  (tableau non vide, texte non blanc). PUR. */
+export const dockingHistoryOf = (test = {}) => DOCKING_HISTORY_FIELDS.some((field) => {
+  const value = test ? test[field] : null;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'string') return value.trim() !== '';
+  return value !== undefined && value !== null && value !== false;
+});
+
+/** L'ARCHIVE DOIT-ELLE ÊTRE CHERCHÉE MALGRÉ UN DATASET MUET ?
+ *
+ *  Défaut signalé (« Test_86 », 15/10/2026) : l'expérience avait été perdue puis
+ *  recréée, si bien que `dockingStructures`, `dockingMolecules` ET `dockingDrive`
+ *  étaient TOUS vides. La page en concluait « aucun import : rien à restaurer » et
+ *  ne cherchait donc JAMAIS la copie de référence restée dans son propre dossier
+ *  du Drive (`<instance>_docking_restore.json.gz`) : le viewer restait vide, et
+ *  rien ne le disait — alors que l'utilisateur, lui, voyait bien les PDB dans
+ *  `…/<instance>/data/pdb_files`.
+ *
+ *  OUI quand les trois signes manquent à la fois — rien de déclaré, RIEN dans la
+ *  base de ce poste, et pourtant une trace de docking dans l'expérience (donc une
+ *  archive existe peut-être). NON pour une page VIERGE (aucune trace) : elle n'a
+ *  rien à chercher, aucune requête n'est faite pour rien, et le défaut « une page
+ *  neuve n'est jamais vierge » ne revient pas. PUR : exécutable sans navigateur. */
+export const dockingArchiveWanted = ({ test = {}, structures = [], molecules = [] } = {}) => {
+  const declared = (Array.isArray(test.dockingStructures) && test.dockingStructures.length > 0)
+    || (Array.isArray(test.dockingMolecules) && test.dockingMolecules.length > 0)
+    || !!test.dockingDrive;
+  if (declared) return false;                     // le chemin déclaré s'en charge
+  if ((Array.isArray(structures) && structures.length > 0)
+    || (Array.isArray(molecules) && molecules.length > 0)) return false;   // la page a de quoi montrer
+  return dockingHistoryOf(test);
+};
+
 /** Les fichiers d'un docking que le dataset DÉCLARE, avec leur lien.
  *  Un fichier sans lien (métadonnées d'un import où l'envoi Drive a échoué) est
  *  écarté : il n'y a rien à télécharger, et le nom seul ne fait pas une

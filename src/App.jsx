@@ -151,9 +151,10 @@ import {
   deletionsForDataset, revivalsForDataset, withoutRevivedExperiments,
   experimentKey, loadExperimentDeletions, loadExperimentRevivals,
   mergeExperimentsAddOnly, protectUnrecordedDrops,
-  protectDistantDrops, describeDistantRescue,
+  protectDistantDrops, describeDistantRescue, experimentsToAdd,
   recordExperimentDeletions, recordExperimentRevivals,
-  describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments
+  describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments,
+  describeSkippedAdditions
 } from './utils/experimentTombstones';
 /* 👥 LA MÊME RÈGLE POUR LA LISTE DES COMPTES (voir utils/teamAccounts.js) : la
    copie partagée est relue avant d'écrire, la liste est FUSIONNÉE (personne par
@@ -168,7 +169,7 @@ import {
   selectionHasTests, selectionIsComplete, describeCount,
   mergeAdministration, mergePreviewOf,
   rowChoicesOf, rowPicksOf, pickAdminRows,
-  experimentRowChoices, pickExperimentRows, testGroupKey, TESTS_SECTION_ID,
+  experimentRowChoices, pickExperimentRows, TESTS_SECTION_ID,
 } from './utils/loadSelection';
 import { canUserOpenDataset, isDatasetRestricted, normalizeMemberNames, datasetAccessOf } from './utils/datasetAccess';
 import {
@@ -4879,17 +4880,7 @@ useEffect(() => {
          chargement n'empile jamais un jumeau. Un essai sans id (entrée écrite
          par une version ancienne) en reçoit un : sans id, rien ne pourrait plus
          le reconnaître. */
-      const existingKeys = new Set(
-        (Array.isArray(testsRef.current) ? testsRef.current : []).map(testGroupKey).filter(Boolean)
-      );
-      const freshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
-      const newTests = [];
-      loadedTests.forEach((p) => {
-        const key = testGroupKey(p);
-        if (key && existingKeys.has(key)) return;      // déjà là : jamais deux fois
-        if (key) existingKeys.add(key);
-        newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });
-      });
+      const { tests: newTests, skipped: alreadyThere } = experimentsToAdd(testsRef.current, loadedTests);
       /* Le retour est VOLONTAIRE : les suppressions de ces expériences sont
          LEVÉES (datées), sinon le verrou d'écriture les reprendrait — un autre
          poste les avait peut-être supprimées, et c'est justement ce qu'on défait
@@ -4902,10 +4893,9 @@ useEffect(() => {
          combien ont été laissées de côté parce qu'elles étaient déjà là — un
          ajout qui « ne fait rien » pour une expérience déjà présente ne doit pas
          ressembler à une panne. */
-      if (newTests.length < loadedTests.length) {
-        experimentRestoreNote = `${loadedTests.length - newTests.length} experiment(s) of this file were ALREADY in this `
-          + 'dataset (same name or same id): they were left alone — a load never stacks twins. '
-          + `${newTests.length} came back WITH THEIR ORIGINAL ID, so their Project link and their Drive folder are found again.`;
+      if (alreadyThere.length) {
+        experimentRestoreNote = describeSkippedAdditions(alreadyThere)
+          + ` ${newTests.length} came back WITH THEIR ORIGINAL ID, so their Project link and their Drive folder are found again.`;
       } else if (newTests.length) {
         experimentRestoreNote = `${newTests.length} experiment(s) came back WITH THEIR ORIGINAL ID: their Project link and `
           + 'their Drive folder are found again — nothing to re-link by hand.';

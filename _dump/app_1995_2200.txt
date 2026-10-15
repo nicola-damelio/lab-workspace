@@ -1,0 +1,206 @@
+1995:           dataset, les expériences que ce poste a vues (ou écrites). Elle ne se
+1996:           vide jamais toute seule : seules les suppressions enregistrées (🗑,
+1997:           écrites par le geste, magasin en fin de module) l'écartent. C'est elle
+1998:           qui permet de refuser un enregistrement qui perdrait une expérience ;
+1999:        2. LA RELECTURE (openDataset, 🔄 Refresh) est en AJOUT SEUL : ce que la
+2000:           copie apporte est adopté, ce qu'elle NE PORTE PAS et que ce poste
+2001:           connaît est GARDÉ — et DIT (`describeKeptExperiments`) ;
+2002:        3. L'ENREGISTREMENT passe par `guardExperimentsForWrite` : rien ne part
+2003:           sans que ce qui manque ait un record de suppression. Ce qui a été
+2004:           repris est DIT à l'écran — un sauvetage muet laisserait croire que
+2005:           tout va bien alors qu'un poste publie une liste tronquée. */
+2006:   const knownExperimentsRef = useRef(new Map());
+2007: 
+2008:   /** Retenir (union, sans jamais effacer) ce que ce poste voit de ce dataset. */
+2009:   const rememberExperiments = (datasetId, list) => {
+2010:     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+2011:     if (!id) return;
+2012:     let map = knownExperimentsRef.current.get(id);
+2013:     if (!map) { map = new Map(); knownExperimentsRef.current.set(id, map); }
+2014:     (Array.isArray(list) ? list : []).forEach((t) => {
+2015:       const key = experimentKey(t);
+2016:       if (key) map.set(key, t);
+2017:     });
+2018:   };
+2019: 
+2020:   /** LE GESTE QUI A LE DROIT D'ÉCARTER SANS RECORD (♻️ Replace, undo/redo) : il
+2021:    *  ne se contente pas de vider la mémoire du poste, il DÉSARME aussi le verrou
+2022:    *  à distance pendant quelques secondes (voir `guardDistantExperiments`) — car
+2023:    *  à cet instant la copie partagée porte encore, mot pour mot, ce que
+2024:    *  l'utilisateur vient d'écarter. */
+2025:   const voluntaryForgetRef = useRef({ datasetId: '', at: 0 });
+2026:   const DISTANT_GUARD_SILENCE_MS = 10000;
+2027: 
+2028:   /** Ce que ce poste connaît de ce dataset (la liste des expériences « vues »). */
+2029:   const knownExperimentsOf = (datasetId) => {
+2030:     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+2031:     const map = knownExperimentsRef.current.get(id);
+2032:     return map ? Array.from(map.values()) : [];
+2033:   };
+2034: 
+2035:   /** UN REMPLACEMENT VOLONTAIRE (« ♻️ Replace ») est le seul geste qui a le
+2036:    *  droit de vider la mémoire de ce dataset : il est visible à l'écran et
+2037:    *  l'utilisateur l'a demandé. La mémoire suit ce que l'écran montre — elle ne
+2038:    *  ressuscite pas ce qu'on vient de remplacer. */
+2039:   const forgetExperiments = (datasetId, list) => {
+2040:     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+2041:     if (!id) return;
+2042:     const map = new Map();
+2043:     (Array.isArray(list) ? list : []).forEach((t) => {
+2044:       const key = experimentKey(t);
+2045:       if (key) map.set(key, t);
+2046:     });
+2047:     knownExperimentsRef.current.set(id, map);
+2048:     /* ♻️ Ce geste ÉCARTE volontairement : le verrou à distance se taît pour ce
+2049:        dataset pendant quelques secondes, sinon il reprendrait tout de suite, de
+2050:        la copie partagée, ce que l'utilisateur vient de remplacer (même règle que
+2051:        la mémoire du poste ci-dessus). */
+2052:     voluntaryForgetRef.current = { datasetId: id, at: Date.now() };
+2053:   };
+2054: 
+2055:   /** LES RECORDS DE CE DATASET : suppressions enregistrées MOINS les levées (une
+2056:    *  expérience restaurée doit pouvoir revenir), chacun rattaché au dataset
+2057:    *  quand il ne le portait pas. */
+2058:   const experimentRecordsOf = (datasetId) => {
+2059:     const deletions = deletionsForDataset(loadExperimentDeletions(), datasetId);
+2060:     const revivals = revivalsForDataset(loadExperimentRevivals(), datasetId);
+2061:     return { deletions: withoutRevivedExperiments(deletions, revivals), revivals };
+2062:   };
+2063: 
+2064:   /** ADOPTER les records portés par une copie (payload du dataset, fichier
+2065:    *  HTML) : une suppression faite sur un autre poste vaut ici aussi — sinon ce
+2066:    *  poste republierait l'expérience que l'autre vient de supprimer. */
+2067:   const adoptDatasetExperimentRecords = (payload) => {
+2068:     if (!payload || typeof payload !== 'object') return;
+2069:     try {
+2070:       if (Array.isArray(payload.deletedExperiments) && payload.deletedExperiments.length) {
+2071:         adoptExperimentDeletions(payload.deletedExperiments);
+2072:       }
+2073:       if (Array.isArray(payload.revivedExperiments) && payload.revivedExperiments.length) {
+2074:         adoptExperimentRevivals(payload.revivedExperiments);
+2075:       }
+2076:     } catch { /* magasin indisponible : la règle reste en mémoire pour la session */ }
+2077:   };
+2078: 
+2079:   /* LE VERROU D'ÉCRITURE — le seul contrat : ce qui n'a pas de record de
+2080:      suppression ne peut pas quitter le dataset. Rend la liste À ÉCRIRE ; ce
+2081:      qu'il a fallu reprendre (ou retirer) est mis à l'écran et DIT. */
+2082:   const guardExperimentsForWrite = (list) => {
+2083:     const datasetId = currentDatasetIdRef.current;
+2084:     const { deletions } = experimentRecordsOf(datasetId);
+2085:     const out = protectUnrecordedDrops(knownExperimentsOf(datasetId), list, deletions);
+2086:     if (!out.rescued.length && !out.removed) return out.tests;
+2087:     const message = [
+2088:       describeUnrecordedDrops(out.rescued),
+2089:       describeRemovedExperiments(out.removed)
+2090:     ].filter(Boolean).join('\n\n');
+2091:     try { console.warn('[experiments] write guard:', out.rescued.map((t) => t.name || t.id)); } catch { /* ignore */ }
+2092:     /* Le dialogue NE REMPLACE PAS celui qui est déjà ouvert (import, sauvegarde
+2093:        manuelle…) : il s'ajoute à ce qui se disait déjà. L'écran reçoit la liste
+2094:        écrite — sinon le prochain enregistrement referait le même sauvetage et
+2095:        l'affichage mentirait sur ce qui vient d'être publié. */
+2096:     setDialog((prev) => prev || {
+2097:       type: 'alert',
+2098:       title: out.rescued.length ? '⚠ Experiments were about to disappear' : '🗑 Deleted experiments',
+2099:       message
+2100:     });
+2101:     setReactTests(out.tests);
+2102:     rememberExperiments(datasetId, out.tests);
+2103:     return out.tests;
+2104:   };
+2105: 
+2106:   /* ── LE VERROU À DISTANCE — « la copie PARTAGÉE qu'on s'apprête à écraser » ──
+2107:      `guardExperimentsForWrite` protège ce que CE poste connaît. Reste le cas du
+2108:      rapport : une expérience créée sur un AUTRE poste pendant que celui-ci
+2109:      gardait une copie plus ancienne. Ce poste ne l'a jamais vue — sa mémoire ne
+2110:      peut donc pas la reprendre — mais l'enregistrement l'effacerait quand même
+2111:      du document partagé, puisque le payload voyage ENTIER.
+2112: 
+2113:      D'où cette relecture AVANT d'écrire : la copie distante (cloud uniquement :
+2114:      une copie du Drive qui a trois heures de retard ferait plus de mal que de
+2115:      bien) est relue, et ce qu'elle porte et que nous n'avons pas est REMIS —
+2116:      tant qu'aucune suppression n'est enregistrée pour lui (voir
+2117:      `protectDistantDrops` : la 🗑 faite ailleurs reste une 🗑).
+2118: 
+2119:      Deux silences, volontaires et explicites :
+2120:        · un geste qui a le droit d'écarter (`forgetExperiments` : ♻️ Replace,
+2121:          undo/redo) désarme ce verrou pour ce dataset pendant
+2122:          `DISTANT_GUARD_SILENCE_MS` ;
+2123:        · toute lecture impossible (hors ligne, règles Firestore) laisse
+2124:          l'enregistrement tel quel : le verrou LOCAL reste le filet, et on ne
+2125:          bloque jamais une sauvegarde sur une lecture qui a échoué. */
+2126:   const readDistantExperiments = async (datasetId) => {
+2127:     if (!db || !datasetId) return null;
+2128:     try {
+2129:       const snap = await db
+2130:         .collection(`artifacts/${appId}/public/data/datasets`)
+2131:         .doc(datasetId)
+2132:         .get();
+2133:       const data = snap && snap.exists ? snap.data() : null;
+2134:       if (!data || !data.payload) return null;
+2135:       const raw = data.isCompressed && typeof data.payload === 'string'
+2136:         ? LZString.decompressFromUTF16(data.payload)
+2137:         : data.payload;
+2138:       if (!raw) return null;
+2139:       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+2140:       return Array.isArray(parsed && parsed.tests) ? parsed.tests : [];
+2141:     } catch (err) {
+2142:       console.warn('[experiments] shared copy unreadable before writing — the local lock stays the only net:', err && err.message);
+2143:       return null;
+2144:     }
+2145:   };
+2146: 
+2147:   /** La liste À ÉCRIRE, relue depuis le document partagé : rien de ce qu'un
+2148:    *  collègue a créé ailleurs ne peut disparaître du fait de cet enregistrement. */
+2149:   /* `opts.datasetId` — l'enregistrement qui part en QUITTANT une base (voir
+2150:      `saveLeavingDataset`) fige ici l'identifiant de la base quittée : au moment
+2151:      où le réseau répond, la base ouverte n'est plus forcément la sienne.
+2152:      `opts.applyToScreen: false` — ce même enregistrement ne doit PAS verser les
+2153:      expériences rattrapées dans la base que l'utilisateur regarde maintenant (il
+2154:      a déjà changé de page). La MÉMOIRE, elle, est toujours écrite : c'est elle
+2155:      qui protège les enregistrements suivants. */
+2156:   const guardDistantExperiments = async (list, { datasetId = null, applyToScreen = true } = {}) => {
+2157:     const targetId = datasetId || currentDatasetIdRef.current;
+2158:     if (!targetId) return list;
+2159:     const forget = voluntaryForgetRef.current;
+2160:     if (forget.datasetId === targetId && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS) return list;
+2161:     const distant = await readDistantExperiments(targetId);
+2162:     if (!Array.isArray(distant) || !distant.length) return list;
+2163:     const { deletions } = experimentRecordsOf(targetId);
+2164:     const out = protectDistantDrops(distant, list, deletions);
+2165:     if (!out.rescued.length) return out.tests;
+2166:     try { console.warn('[experiments] distant write guard:', out.rescued.map((t) => t.name || t.id)); } catch { /* ignore */ }
+2167:     setDialog((prev) => prev || {
+2168:       type: 'alert',
+2169:       title: '⚠ Experiments from another workstation were about to disappear',
+2170:       message: describeDistantRescue(out.rescued)
+2171:     });
+2172:     if (applyToScreen) setReactTests(out.tests);
+2173:     rememberExperiments(targetId, out.tests);
+2174:     return out.tests;
+2175:   };
+2176: 
+2177:   /* Ce que l'écran montre est RETENU : la mémoire se remplit au fil du rendu
+2178:      (une union par identité — idempotente, donc la frappe ne change rien). */
+2179:   rememberExperiments(currentDatasetId, tests);
+2180: 
+2181:   // ── AUTO-ATTRIBUTE OPENED TESTS TO THE CURRENT SCIENTIST ────────────────
+2182:   // A test with no owner is invisible to non-superuser scientists in the test
+2183:   // list (only superusers see unassigned tests), so a scientist who opens an
+2184:   // unassigned test would lose it after closing it. Claim it for them on open
+2185:   // so it stays visible in their list.
+2186:   useEffect(() => {
+2187:     if (!currentUser || !currentUser.name) return;
+2188:     const openTest = tests.find((x) => x.id === activeTestId);
+2189:     if (!openTest) return;
+2190:     const scientists = [openTest.operator, ...(openTest.coScientists || [])].filter(Boolean);
+2191:     if (scientists.length > 0) return; // already owned / assigned to others
+2192:     setTests((prev) =>
+2193:       prev.map((x) => (x.id === openTest.id ? { ...x, operator: currentUser.name } : x))
+2194:     );
+2195:     // eslint-disable-next-line react-hooks/exhaustive-deps
+2196:   }, [activeTestId]);
+2197: 
+2198:   // ── « OÙ J'ÉTAIS » : mémoire de la dernière expérience ouverte ───────────
+2199:   // 1) Chaque fois qu'on ouvre un dataset, on relit la mémoire de CETTE base
+2200:   //    (sessionStorage, clé par dataset) — la mémoire suit donc l'onglet et

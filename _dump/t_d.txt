@@ -1,0 +1,137 @@
+400: /** UNE LECTURE N'EFFACE PLUS : la copie relue (`incoming`) est adoptée telle
+401:  *  quelle, et ce que ce poste connaît (`current`) et qu'elle ne porte pas est
+402:  *  AJOUTÉ à la fin. Les suppressions enregistrées s'appliquent aux deux.
+403:  *
+404:  *  ❗ UN ID, UNE LIGNE — ET L'AUTRE NOM SE DIT. L'id est l'identité qui TRAVERSE
+405:  *  les renommages : la copie relue peut donc porter NOTRE id sous un AUTRE nom (un
+406:  *  poste a renommé l'expérience, ou la reprise du Drive l'a ramenée sous son nom
+407:  *  d'aujourd'hui). Deux lignes pour un même id était le jumeau que la relecture
+408:  *  SUIVANTE, elle, efface par id — la ligne reprise repartait alors sans un mot.
+409:  *  Ici la ligne DE L'ÉCRAN reste (« l'ancien nom ne bouge pas » : l'utilisateur ne
+410:  *  voit rien changer sous ses yeux) et l'autre nom est rendu dans `aliases` pour
+411:  *  être DIT — jamais recopié en silence.
+412:  *
+413:  *  Rend `{ tests, added, aliases, collapsed }` :
+414:  *   · `added` — expériences gardées parce que la copie relue ne les portait pas
+415:  *     (le signe qu'un autre poste a publié une liste plus courte) ;
+416:  *   · `aliases` — `{ kept, copy }` : même id, deux noms (le nom gardé est celui de
+417:  *     l'écran, l'autre est son alias) ;
+418:  *   · `collapsed` — lignes en double DÉJÀ écrites par une version antérieure du
+419:  *     programme (même id, autres noms) effondrées en une seule : rien ne s'efface
+420:  *     en silence, l'effondrement se dit (voir `describeCollapsedExperiments`).
+421:  */
+422: export const mergeExperimentsAddOnly = (current, incoming, deletions) => {
+423:   const records = normalizeDeletions(deletions);
+424:   const mine = (Array.isArray(current) ? current : []).filter(Boolean);
+425:   const fresh = [];
+426:   const collapsed = [];
+427:   (Array.isArray(incoming) ? incoming : []).forEach((t) => {
+428:     const id = idOf(t);
+429:     const name = nameOf(t);
+430:     /* Le nom d'abord (deux entrées sans id sont deux expériences), puis l'id : le
+431:        survivant garde SA ligne, et un autre nom pour le même id est un alias. */
+432:     const twin = id
+433:       ? fresh.find((k) => idOf(k) === id)
+434:       : fresh.find((k) => !!name && nameOf(k) === name);
+435:     if (!twin) { fresh.push(t); return; }
+436:     if ((nameOf(twin) || '') !== (name || '')) collapsed.push({ kept: twin, copy: t });
+437:   });
+438:   const seen = new Set();
+439:   const added = [];
+440:   const aliases = [];
+441:   mine.forEach((t) => {
+442:     const id = idOf(t);
+443:     const name = nameOf(t);
+444:     const key = experimentKey(t);
+445:     /* ❗ RECONNUE PAR L'ID D'ABORD : c'est la clé de la relecture et celle du
+446:        verrou d'écriture. La garder EN PLUS de la ligne relue posait deux lignes
+447:        pour un id — le jumeau que la relecture suivante effaçait. */
+448:     const twin = id
+449:       ? fresh.find((k) => idOf(k) === id)
+450:       : (key ? fresh.find((k) => experimentKey(k) === key) : null);
+451:     if (twin) {
+452:       /* ❗ MÊME ID, DEUX NOMS : LA LIGNE DE L'ÉCRAN NE BOUGE PAS. C'est elle que
+453:          l'utilisateur regarde, et c'est la reprise qu'elle porte ; l'autre nom est
+454:          rendu comme ALIAS pour être DIT. (Adopter la ligne de la copie faisait
+455:          disparaître la reprise de l'écran — son id étant « déjà là » via l'autre
+456:          nom, aucun verrou ne bronchait : c'était la fuite ④ du diagnostic.)
+457:          MÊME NOM, lui, n'est pas un renommage : c'est la MÊME expérience, et la
+458:          copie relue fait foi (elle est la plus récente par construction) — une
+459:          valeur fraîche ne se remplace pas par la nôtre. */
+460:       const renamed = (nameOf(twin) || '') !== (name || '');
+461:       if (id && renamed) {
+462:         const at = fresh.indexOf(twin);
+463:         aliases.push({ kept: t, copy: twin });
+464:         if (at >= 0) fresh[at] = t;
+465:       }
+466:       return;
+467:     }
+468:     if (!key || seen.has(key)) return;
+469:     if (isExperimentDeleted(t, records)) return;
+470:     seen.add(key);
+471:     added.push(t);
+472:     fresh.push(t);
+473:   });
+474:   const tests = withoutDeletedExperiments(fresh, records);
+475:   return { tests, added, aliases, collapsed };
+476: };
+477: 
+478: /* ---------------------------------------------------------------------------
+479:  * 📣 CE QUI S'EST PASSÉ SE DIT (jamais un enregistrement muet)
+480:  * ------------------------------------------------------------------------ */
+481: 
+482: const namesOf = (list) => (Array.isArray(list) ? list : [])
+483:   .map((t) => nameOf(t) || `#${idOf(t)}`)
+484:   .filter(Boolean)
+485:   .slice(0, 6)
+486:   .join(', ');
+487: 
+488: /** Le compte-rendu d'un ENREGISTREMENT qui a failli perdre des expériences. */
+489: export const describeUnrecordedDrops = (rescued) => (
+490:   Array.isArray(rescued) && rescued.length
+491:     ? `⚠ The dataset copy that was about to be written did NOT carry ${rescued.length} experiment(s) `
+492:       + `(${namesOf(rescued)}) and no deletion was recorded for them: they were KEPT. `
+493:       + 'This is the signature of a stale copy (another workstation, or an offline read): '
+494:       + 'reopen the dataset there and let it publish again (🔄 Refresh). An experiment you really want gone '
+495:       + 'is deleted in the Experiments page (🗑), so that it is forgotten everywhere.'
+496:     : ''
+497: );
+498: 
+499: /** Le compte-rendu du verrou à DISTANCE : la copie partagée portait des
+500:  *  expériences que ce poste n'avait JAMAIS vues (un collègue les a créées entre
+501:  *  deux enregistrements, sur un autre poste). Elles sont REMISES : un
+502:  *  enregistrement ne les efface plus. */
+503: export const describeDistantRescue = (rescued) => (
+504:   Array.isArray(rescued) && rescued.length
+505:     ? `⚠ The SHARED copy of this dataset carried ${rescued.length} experiment(s) this device had `
+506:       + `never seen (${namesOf(rescued)}): a save was about to erase them from the document everyone `
+507:       + 'reads. They were KEPT and written back with your copy. This is what a colleague working on '
+508:       + 'the same dataset from another workstation looks like — reopen the dataset here (🔄 Refresh) '
+509:       + 'to see their experiments.'
+510:     : ''
+511: );
+512: 
+513: /** Le compte-rendu d'une LECTURE qui a gardé des expériences absentes de la copie relue. */
+514: export const describeKeptExperiments = (added) => (
+515:   Array.isArray(added) && added.length
+516:     ? `⚠ The shared copy did not carry ${added.length} experiment(s) this device already knows `
+517:       + `(${namesOf(added)}): they were KEPT here — a re-read never erases. If the dataset must lose them `
+518:       + 'for good, delete them in the Experiments page (🗑).'
+519:     : ''
+520: );
+521: 
+522: /** Le compte-rendu des expériences retirées parce que leur suppression est
+523:  *  enregistrée (ici ou sur un autre poste — le record voyage). */
+524: export const describeRemovedExperiments = (count) => (
+525:   Number(count) > 0
+526:     ? `${count} experiment(s) whose deletion is recorded were removed from the saved copy (their 🗑 travels with the dataset).`
+527:     : ''
+528: );
+529: 
+530: /* ---------------------------------------------------------------------------
+531:  * 💾 MAGASIN — les deux clés localStorage (App.jsx ne fait que l'entrée/sortie)
+532:  * ------------------------------------------------------------------------ */
+533: 
+534: const storeOf = () => {
+535:   try {
+536:     return typeof globalThis !== 'undefined' && globalThis.localStorage ? globalThis.localStorage : null;

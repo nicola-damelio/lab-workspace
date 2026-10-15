@@ -1,0 +1,86 @@
+1635:     && pendingLoad.fullState.administration)
+1636:     ? pendingLoad.fullState.administration
+1637:     : null;
+1638:   /* Les lignes à MONTRER, page par page (`rowChoicesOf`) : titre lisible,
+1639:      contexte, « déjà dans la base », doublon interne… Recalculé avec le fichier,
+1640:      la base ou le mode — jamais à chaque frappe. */
+1641:   const loadRowChoices = useMemo(() => {
+1642:     if (!pendingLoad) return null;
+1643:     const out = {};
+1644:     if (pendingLoad.isAdmin && loadIncomingAdmin) {
+1645:       (Array.isArray(pendingLoad.sections) ? pendingLoad.sections : []).forEach((s) => {
+1646:         const rows = [];
+1647:         (s.keys || []).forEach((k) => {
+1648:           if (!Array.isArray(loadIncomingAdmin[k])) return;
+1649:           rowChoicesOf(k, loadIncomingAdmin[k], loadMergeBase ? loadMergeBase[k] : undefined, loadAdminMode)
+1650:             .forEach((c) => rows.push(c));
+1651:         });
+1652:         out[s.id] = rows;
+1653:       });
+1654:       return out;
+1655:     }
+1656:     /* Dataset scientifique : SEULE la page « Expériences / Tests » a des lignes,
+1657:        et UNE LIGNE = UNE EXPÉRIENCE (ses conditions comprises) — c'est ce qui
+1658:        rend le retour d'une seule expérience chirurgical (voir
+1659:        experimentRowChoices). Les autres pages gardent leur case unique.
+1660:        La liste COURANTE du dataset, elle, est celle que le fichier a
+1661:        photographiée à son ouverture (`pendingLoad.baseTests`, voir loadHTML) :
+1662:        la lire dans `testsRef` ICI faisait lever « Cannot access 'testsRef'
+1663:        before initialization » — un memo est évalué PENDANT le rendu, donc
+1664:        avant la déclaration de cette ref, 250 lignes plus bas. */
+1665:     const testRows = experimentRowChoices(pendingLoad.tests, pendingLoad.baseTests, false);
+1666:     if (testRows.length) out[TESTS_SECTION_ID] = testRows;
+1667:     return Object.keys(out).length ? out : null;
+1668:   }, [pendingLoad, loadIncomingAdmin, loadMergeBase, loadAdminMode]);
+1669:   /** Lignes cochées par défaut d’une page, dans le mode courant : celles que
+1670:    *  l’utilisateur décide (`picked`) ET celles que la fusion reconnaîtra de
+1671:    *  toute façon (`locked` — voir rowChoicesOf : elles doivent traverser la
+1672:    *  sélection pour être comptées comme « déjà là »). */
+1673:   const defaultRowKeysOf = (section) => {
+1674:     const rows = (loadRowChoices && section) ? loadRowChoices[section.id] : null;
+1675:     return Array.isArray(rows) ? rows.filter((c) => c.picked || c.locked).map((c) => c.key) : [];
+1676:   };
+1677:   /* Le mode se choisit dans la fenêtre : changer de mode REMET les lignes à
+1678:      leur défaut (un « tout est coché » hérité du remplacement n’a aucun sens en
+1679:      fusion) — et l’écran le dit, les compteurs se recalculent. */
+1680:   const setLoadMode = (m) => {
+1681:     setLoadAdminMode(m);
+1682:     if (loadIncomingAdmin) {
+1683:       setLoadRows(rowPicksOf(loadIncomingAdmin, loadSections, loadMergeBase, m));
+1684:     }
+1685:   };
+1686:   const toggleLoadRow = (sectionId, key, on) => setLoadRows((prev) => {
+1687:     const cur = (prev && typeof prev === 'object') ? prev : {};
+1688:     const list = Array.isArray(cur[sectionId]) ? cur[sectionId] : [];
+1689:     const next = on
+1690:       ? (list.indexOf(key) === -1 ? [...list, key] : list)
+1691:       : list.filter((k) => k !== key);
+1692:     return { ...cur, [sectionId]: next };
+1693:   });
+1694:   /* « Tout / Rien » d’une PAGE aux deux niveaux à la fois : la page et ses
+1695:      lignes. Décocher la page remet aussi ses lignes à vide pour que le compte
+1696:      affiché et ce qui sera importé disent la même chose. */
+1697:   const pickLoadRows = (sectionIds, on) => setLoadRows((prev) => {
+1698:     /* Valable pour les DEUX familles de lignes : celles d’une base
+1699:        d’administration (`rowChoicesOf`) et celles d’un dataset scientifique
+1700:        (`experimentRowChoices`, une par expérience). Sans cette généralité, les
+1701:        boutons « all / none » d’une ligne d’expérience ne feraient rien. */
+1702:     const cur = (prev && typeof prev === 'object') ? prev : {};
+1703:     const next = { ...cur };
+1704:     loadSections.forEach((s) => {
+1705:       if (sectionIds.indexOf(s.id) === -1) return;
+1706:       next[s.id] = on ? defaultRowKeysOf(s) : [];
+1707:     });
+1708:     return next;
+1709:   });
+1710:   const loadMergePreview = useMemo(() => {
+1711:     if (!pendingLoad || !pendingLoad.isAdmin) return null;
+1712:     /* Les sections sont RELUES ICI (et non passées) : `loadSections` est un
+1713:        tableau neuf à chaque rendu, ce qui ferait recalculer l’aperçu sans
+1714:        arrêt — `pendingLoad.sections`, lui, ne change qu’avec le fichier. */
+1715:     const list = Array.isArray(pendingLoad.sections) ? pendingLoad.sections : [];
+1716:     /* L’aperçu porte sur les lignes COCHÉES (`pickAdminRows`) : unticker une
+1717:        ligne doit faire bouger le « +3 lignes » de la page — sinon l’annonce
+1718:        mentirait sur ce que le bouton va faire. */
+1719:     const incoming = pickAdminRows(loadIncomingAdmin || {}, list, loadRows);
+1720:     const picked = Array.isArray(loadPick) ? loadPick : defaultSelection(list);

@@ -1,0 +1,101 @@
+4540:           fullState: s,
+4541:           sections: dataSections,
+4542:           baseTests: testsRef.current,
+4543:         });
+4544:         setLoadPick(defaultSelection(dataSections));
+4545:         /* 🔎 LA PAGE « EXPÉRIENCES / TESTS » SE CHOISIT RIGA PER RIGA, comme une
+4546:            base d'administration : une ligne = une expérience, ses conditions
+4547:            comprises (voir experimentRowChoices dans utils/loadSelection.js). Le
+4548:            calcul est fait ICI et non par le memo `loadRowChoices` : celui-ci ne
+4549:            connaît `pendingLoad` qu'à partir du rendu suivant.
+4550:            Défaut = TOUT coché, le seul défaut sûr pour les DEUX boutons : en
+4551:            AJOUT, ce que le dataset porte déjà est ignoré par l'ajout lui-même
+4552:            (aucun jumeau ne s'empile) ; en REMPLACEMENT, décocher une ligne veut
+4553:            vraiment la retirer — cela doit rester un geste. */
+4554:         const sciRows = experimentRowChoices(loadedTests, testsRef.current, false);
+4555:         setLoadRows(sciRows.length
+4556:           ? { [TESTS_SECTION_ID]: sciRows.filter((r) => r.picked || r.locked).map((r) => r.key) }
+4557:           : null);
+4558:       } catch (err) {
+4559:         setDialog({
+4560:           type: 'alert',
+4561:           title: 'Load Failed',
+4562:           message: 'Could not read this file: ' + err.message
+4563:         });
+4564:       }
+4565:     };
+4566: 
+4567:     reader.readAsText(file);
+4568: 
+4569:     e.target.value = '';
+4570:   };
+4571: 
+4572:   const confirmLoad = (mode, pickedIds, rowPicks) => {
+4573:     const { tests: pendingTests, fullState: rawState, sections } = pendingLoad;
+4574:     const allSections = Array.isArray(sections) ? sections : [];
+4575:     const picked = Array.isArray(pickedIds)
+4576:       ? pickedIds
+4577:       : (Array.isArray(loadPick) ? loadPick : defaultSelection(allSections));
+4578:     /* LIGNE À LIGNE : le choix fait dans la fenêtre (`{ [page]: [clés] }`, voir
+4579:        rowChoicesOf). `null` / absent = aucune sélection par ligne : le contenu
+4580:        part entier — c’est le cas de « ♻️ Import everything » et des imports qui
+4581:        ne connaissent pas cette sélection (dataset scientifique) — le dataset
+4582:        scientifique a désormais SES lignes : une par expérience, voir
+4583:        experimentRowChoices. */
+4584:     const rowsPicked = (rowPicks && typeof rowPicks === 'object') ? rowPicks : null;
+4585:     /* Import PARTIEL : le snapshot est réduit aux éléments COCHÉS — les autres
+4586:        gardent leur valeur actuelle (rien n’est écrasé en silence). Les
+4587:        expériences d’un dataset scientifique ne sont remplacées que si
+4588:        l’élément « Expériences » est coché. */
+4589:     const pruned = filterLoadState(rawState, allSections, picked);
+4590:     const s = pruned.state;
+4591:     /* 🔎 LE CHOIX RIGA PER RIGA (voir experimentRowChoices) : la page
+4592:        « Expériences / Tests » est réduite aux essais COCHÉS. L'ID D'ORIGINE de
+4593:        chaque essai traverse tel quel — c'est lui que le lien du projet
+4594:        (`project.experiments[].testId`) et le dossier du Drive nomment, donc
+4595:        c'est ce qui fait revenir une expérience au lieu d'en créer un jumeau
+4596:        anonyme. Sans sélection par ligne (import « everything », fichier sans
+4597:        lignes), le contenu de la page part entier, comme avant. */
+4598:     const allLoadedTests = selectionHasTests(picked) ? (pendingTests || []) : [];
+4599:     const testRowPicks = (rowsPicked && Array.isArray(rowsPicked[TESTS_SECTION_ID]))
+4600:       ? rowsPicked[TESTS_SECTION_ID]
+4601:       : null;
+4602:     const loadedTests = testRowPicks ? pickExperimentRows(allLoadedTests, testRowPicks) : allLoadedTests;
+4603:     /* Les suppressions (et restaurations) portées par le FICHIER sont adoptées,
+4604:        comme celles des projets : une expérience supprimée sur un autre poste
+4605:        reste supprimée ici, et une expérience restaurée ailleurs peut revenir. */
+4606:     adoptDatasetExperimentRecords(s);
+4607:     let targetId = currentDatasetId;
+4608:     /* Le verdict de la restauration des projets ('' = rien à dire) : il est
+4609:        affiché à la FIN, une fois la fenêtre d'import refermée — « rien ne se
+4610:        passe » devient une phrase qui dit quoi faire (describeProjectRestore). */
+4611:     let projectRestoreNote = '';
+4612:     /* Le verdict de la restauration des EXPÉRIENCES ('' = rien à dire) : il dit
+4613:        COMBIEN d'expériences sont revenues, avec leur id d'origine, et lesquelles
+4614:        ont été écartées parce que le dataset les porte déjà — sinon l'ajout
+4615:        « ne fait rien » pour une expérience déjà là, et cela ressemble à une
+4616:        panne (voir le mode AJOUT plus bas). */
+4617:     let experimentRestoreNote = '';
+4618:     /* ❗ PREMIER CAS DE SILENCE : le fichier lui-même n'a RIEN à donner. Une
+4619:        sauvegarde prise APRÈS la disparition des projets porte « Projets — vide »,
+4620:        et l'import ne peut alors rien ramener : c'est exactement « nothing
+4621:        happens » — il faut le dire, et dire où est la copie d'avant. */
+4622:     if ((Array.isArray(picked) ? picked : []).indexOf('data:projects') !== -1
+4623:         && (!Array.isArray(s.projects) || s.projects.length === 0)) {
+4624:       projectRestoreNote = 'The “Projets” item of this file is EMPTY (the import window shows “vide” beside it): '
+4625:         + 'this backup was taken when the project list was already empty, so it carries no project to give back.\n\n'
+4626:         + 'Pick an OLDER backup (📂 Load HTML on an earlier file) — the project’s copy is in it. A project deleted on '
+4627:         + 'this device, on the other hand, is restored from Projects → “🗑 Recently deleted” (↩ Restore).';
+4628:     }
+4629: 
+4630:     /* Restauration d’une base d’administration : tout le contenu vit dans
+4631:        s.administration (aucune expérience). Si la base actuellement ouverte
+4632:        n’est PAS une base d’administration, la sauvegarde est restaurée dans
+4633:        une NOUVELLE base (le dataset scientifique ouvert n’est pas touché). */
+4634:     if (pendingLoad && pendingLoad.isAdmin) {
+4635:       /* Les lignes cochées s’appliquent AVANT les deux modes : la fusion comme
+4636:          le remplacement ne voient que ce qui a été coché — c’est le même
+4637:          filtre, donc les deux gestes restent comparables (« la même sélection,
+4638:          deux façons de l’appliquer »). */
+4639:       const pickedAdmin = pickAdminRows(pruned.administration || {}, allSections, rowsPicked);
+4640:       /* DEUX FAÇONS d’appliquer les pages cochées — c’est le seul endroit où

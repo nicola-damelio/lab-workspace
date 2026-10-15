@@ -1,0 +1,120 @@
+1: /* =========================================================================
+2:    src/utils/experimentTombstones.js
+3:    UNE EXPÉRIENCE DISPARUE NE DISPARAÎT PLUS — ET CELLE QU'ON A SUPPRIMÉE
+4:    NE RESSUSCITE PAS.
+5: 
+6:    LE DÉFAUT RÉPARÉ ICI, dit par le rapport : « le esperienze spariscono dal
+7:    dataset all'enregistrement automatique — sul Drive ci sono ancora le
+8:    cartelle e i .json, ma nel programma non ci sono più ». Rien, à l'écran, ne
+9:    le disait : ni un avertissement, ni une corbeille (il n'y en a pas pour les
+10:    expériences).
+11: 
+12:    LA CAUSE, en une phrase : la liste des expériences vit ENTIÈRE dans le
+13:    payload du dataset (`tests`) et CHAQUE enregistrement écrit la liste telle
+14:    qu'elle est en mémoire, d'un bloc (`set(..., { merge: true })`). Un poste qui
+15:    a lu une copie plus ANCIENNE du dataset (Firestore injoignable → repli sur la
+16:    copie du Drive, ou sur la sienne), qui ouvre simplement le dataset, publie
+17:    donc une liste PLUS COURTE — et l'ancienne liste du document partagé est
+18:    perdue. L'enregistrement est automatique (1,5 s après la dernière frappe, et
+19:    vidé à la fermeture d'onglet) : personne ne l'a demandé, personne ne l'a vu.
+20: 
+21:    LA RÉPARATION tient dans les TROIS mêmes idées que pour les projets (voir
+22:    utils/projectTombstones.js — un projet, lui, a déjà son verrou) :
+23: 
+24:      1. LA LECTURE N'EFFACE PLUS — `mergeExperimentsAddOnly` : ce qu'une copie
+25:         relue apporte est adopté (elle est la plus récente par construction),
+26:         mais ce qu'elle NE PORTE PAS et que ce poste connaît est GARDÉ. Une
+27:         relecture ne peut donc plus vider la mémoire du poste avant que
+28:         l'enregistrement suivant ne publie le vide.
+29:      2. L'ÉCRITURE NE PERD RIEN SANS RECORD — `protectUnrecordedDrops` : avant
+30:         d'écrire, ce que le poste connaissait et que la liste sortante ne porte
+31:         plus est REMIS (et l'écran le dit, voir `describeUnrecordedDrops`).
+32:         Une expérience ne peut donc disparaître que par une SUPPRESSION, jamais
+33:         par un enregistrement.
+34:      3. LA SUPPRESSION EST UNE DONNÉE — `deletedExperiments` : le geste de
+35:         suppression (🗑) écrit un record DATÉ, qui voyage dans le payload du
+36:         dataset et dans `_workspace/state.json`, sinon un autre poste (qui
+37:         détient encore l'expérience) la republierait, et un retour volontaire
+38:         (restauration d'une sauvegarde) doit pouvoir lever ce record — c'est la
+39:         LEVÉE (« revival »), également datée et voyageuse.
+40: 
+41:    L'IDENTITÉ d'une expérience est son `id` (celle que le lien projet ↔
+42:    expérience porte, `project.experiments[].testId`) ; le NOM ne sert que
+43:    lorsqu'un record — ou l'expérience — n'a pas d'id (une entrée écrite par une
+44:    version ancienne reste comprise, comme pour les tombes de projets).
+45: 
+46:    Tout est PUR ici (les fonctions reçoivent et rendent des listes) à
+47:    l'exception du bloc « MAGASIN » en fin de fichier, qui ne fait que lire et
+48:    écrire les deux clés localStorage — comme projectsModule.jsx le fait pour
+49:    les tombes de projets. Vérifié par _experiment_vanishing_test.mjs.
+50:    ========================================================================= */
+51: 
+52: /** Clés localStorage des records (écrites par le magasin de ce module). */
+53: export const DELETED_EXPERIMENTS_KEY = 'labWorkspace_deletedExperiments';
+54: export const REVIVED_EXPERIMENTS_KEY = 'labWorkspace_revivedExperiments';
+55: 
+56: /** Nombre de records conservés (les plus récents). Une suppression n'est jamais
+57:  *  oubliée à court terme ; la limite n'existe que pour qu'un localStorage ne
+58:  *  grossisse pas indéfiniment sur des années d'usage. */
+59: export const MAX_RECORDS = 500;
+60: 
+61: const idOf = (x) => {
+62:   if (x && typeof x === 'object') return String(x.id === undefined || x.id === null ? '' : x.id).trim();
+63:   return x === undefined || x === null ? '' : String(x).trim();
+64: };
+65: 
+66: const nameOf = (x) => (x && typeof x === 'object'
+67:   ? String(x.name === undefined || x.name === null ? '' : x.name).trim()
+68:   : '');
+69: 
+70: const datasetOf = (x) => String(
+71:   x && typeof x === 'object' && x.datasetId !== undefined && x.datasetId !== null ? x.datasetId : ''
+72: );
+73: 
+74: /** L'identité d'une EXPÉRIENCE : son id, sinon son nom. Rien de reconnaissable
+75:  *  (ni id ni nom) → '', et une entrée sans identité n'est jamais « supprimée »
+76:  *  ni « remise » : elle n'est pas identifiable. */
+77: export const experimentKey = (test) => {
+78:   const id = idOf(test);
+79:   if (id) return `id:${id}`;
+80:   const name = nameOf(test);
+81:   return name ? `name:${name}` : '';
+82: };
+83: 
+84: /** L'ID seul d'une expérience ('' quand elle n'en a pas) — l'identité qui TRAVERSE
+85:  *  les renommages : l'objet du Drive garde l'id d'une expérience pendant que son
+86:  *  nom change. Exporté pour que l'écran (➕ App.jsx) et la fenêtre d'import
+87:  *  (`experimentRowChoices`) n'aient pas leur propre variante de la règle : une
+88:  *  identité, un seul endroit — c'est exactement la divergence nom/id qui laissait
+89:  *  une expérience reprise repartir en silence. */
+90: export const experimentId = (test) => idOf(test);
+91: 
+92: /** La clé d'un RECORD : `<datasetId>::<id>` (ou `<datasetId>::#<nom>` quand le
+93:  *  record n'a pas d'id). L'id seul ne suffit pas — deux datasets peuvent porter
+94:  *  des expériences de même id (copie d'une sauvegarde). */
+95: export const recordKey = (entry) => {
+96:   const id = idOf(entry);
+97:   if (id) return `${datasetOf(entry)}::${id}`;
+98:   const name = nameOf(entry);
+99:   return name ? `${datasetOf(entry)}::#${name}` : '';
+100: };
+101: 
+102: /** Une liste HORODATÉE propre et utilisable (suppressions comme levées) : les
+103:  *  entrées sans identité sont écartées, deux records de même identité n'en font
+104:  *  qu'un (la date la plus récente gagne) et la liste est bornée à MAX_RECORDS,
+105:  *  la plus récente d'abord. Accepte `['t12']` comme `[{ id, name, deletedAt }]`
+106:  *  — une entrée écrite par une version plus ancienne (ou un payload abîmé)
+107:  *  reste donc comprise — et une liste IMBRIQUÉE, comme le fait déjà
+108:  *  normalizeTombstones pour les projets. */
+109: const normalizeStamped = (list, field) => {
+110:   const flat = [];
+111:   const walk = (v) => {
+112:     if (Array.isArray(v)) v.forEach(walk);
+113:     else if (v) flat.push(v);
+114:   };
+115:   walk(list);
+116:   const byKey = new Map();
+117:   flat.forEach((raw) => {
+118:     const entry = {
+119:       id: idOf(raw),
+120:       name: nameOf(raw),

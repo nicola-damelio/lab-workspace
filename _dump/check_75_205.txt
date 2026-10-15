@@ -1,0 +1,130 @@
+﻿  rescues.push({
+    file: f,
+    date,
+    items: list.filter(Boolean).map((t) => ({ id: String(t.id || ''), name: String(t.name || '') })),
+  });
+});
+rescues.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+say('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+say('  EXPÃ‰RIENCES REPRISES â€” pourquoi elles repartent (sur le vrai code)');
+say('â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•');
+say('');
+say(`â‘  LES FICHIERS DE REPRISE â€” ${rescues.length} fichier(s) portant une liste d'expÃ©riences`);
+const namesById = new Map();
+rescues.forEach((r) => {
+  const family = /experiences-retrouvees/i.test(r.file)
+    ? 'reprise du Drive'
+    : (/^RESTORE-/i.test(r.file) ? 'restauration ciblÃ©e' : 'autre');
+  say(`  ${r.date}  ${r.file}  â†’ ${r.items.length} expÃ©rience(s)  [${family}]`);
+  r.items.forEach((t) => {
+    if (!namesById.has(t.id)) namesById.set(t.id, new Set());
+    namesById.get(t.id).add(t.name);
+  });
+});
+const renames = Array.from(namesById.entries()).filter(([, n]) => n.size > 1);
+say('');
+say(`  âš  ${renames.length} id(s) portÃ©(s) par PLUSIEURS noms Ã  travers les fichiers de reprise`);
+say('    (l\'objet du Drive garde l\'id de l\'expÃ©rience Ã€ TRAVERS SES RENOMMAGES) :');
+renames.forEach(([id, n]) => say(`      id=${id} â†’ ${[...n].join(' / ')}`));
+/* LE SCÃ‰NARIO, avec les donnÃ©es RÃ‰ELLES :
+   `file`   = la REPRISE DU JOUR â€” le fichier d'expÃ©riences retrouvÃ©es le plus
+              rÃ©cent (Â« â€¦experiences-retrouvees_<date>.json Â», l'export du Drive
+              qu'on applique Ã  la fenÃªtre d'import) ;
+   `base`   = ce que le dataset porte DÃ‰JÃ€ : TOUS les autres fichiers (les reprises
+              dÃ©jÃ  appliquÃ©es + les restaurations ciblÃ©es RESTORE-*), dÃ©doublonnÃ©
+              par NOM â€” c'est ainsi que l'Ã©cran identifie ses lignes. */
+const rescueLike = rescues.filter((r) => /experiences-retrouvees/i.test(r.file));
+const newest = (rescueLike.length ? rescueLike[rescueLike.length - 1] : rescues[rescues.length - 1]) || null;
+const applied = rescues.filter((r) => r !== newest);
+const byName = new Map();
+applied.flatMap((r) => r.items).forEach((t) => {
+  if (!byName.has(t.name)) byName.set(t.name, { ...t, datasetId: 'ds_sim' });
+});
+const base = Array.from(byName.values());
+const file = (newest ? newest.items : []).map((t) => ({ ...t, datasetId: 'ds_sim' }));
+say('');
+say(`  reprises dÃ©jÃ  appliquÃ©es : ${applied.map((r) => r.date).join(', ') || 'â€”'} â†’ ${base.length} nom(s) dans le dataset`);
+say(`  reprise du jour : ${newest ? `${newest.date}  ${newest.file}` : 'â€”'}`);
+say(`      ${file.map((t) => `Â« ${t.name} Â»`).join(', ')}`);
+
+say('');
+say('â‘¡ LA FENÃŠTRE D\'IMPORT â€” l\'identitÃ© d\'une ligne est le NOM (`testGroupKey`)');
+const rows = L.experimentRowChoices(file, base, false);
+const baseIds = new Set(base.map(T.experimentKey).filter(Boolean));
+const offered = [];
+rows.forEach((row) => {
+  const item = file.find((t) => L.testGroupKey(t) === row.key) || null;
+  const key = item ? T.experimentKey(item) : '';
+  const alreadyById = !!key && baseIds.has(key);
+  if (item) say(`  ligne Â« ${row.title} Â»  inBase=${row.inBase}  Â« Ã  ajouter Â»=${!row.inBase}  id dÃ©jÃ  dans le dataset=${alreadyById}`);
+  if (item && !row.inBase && alreadyById) offered.push(item);
+});
+leak('la fenÃªtre propose Â« Ã  ajouter Â» une expÃ©rience dont l\'ID est DÃ‰JÃ€ dans le dataset',
+  offered.length
+    ? offered.map((t) => `Â« ${t.name} Â» (${T.experimentKey(t)}) : mÃªme id qu'une ligne dÃ©jÃ  prÃ©sente, sous un autre nom`)
+      .join('\n')
+    : 'aucune ligne de ce fichier dans ce cas',
+  offered.length > 0);
+
+say('');
+say('â‘¢ L\'AJOUT (âž•) â€” le seul anti-jumeau de App.jsx compare des NOMS');
+/* Le code de App.jsx recopiÃ© MOT POUR MOT (voir l\'ajout des lignes du fichier). */
+const existingKeys = new Set(base.map(L.testGroupKey).filter(Boolean));
+const freshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+const newTests = [];
+file.forEach((p) => {
+  const key = L.testGroupKey(p);
+  if (key && existingKeys.has(key)) return;   // dÃ©jÃ  lÃ  : jamais deux fois
+  if (key) existingKeys.add(key);
+  newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });
+});
+const screen = base.concat(newTests);
+const byId = new Map();
+screen.forEach((t) => {
+  const k = T.experimentKey(t);
+  if (!k) return;
+  if (!byId.has(k)) byId.set(k, []);
+  byId.get(k).push(t.name);
+});
+const stacked = Array.from(byId.entries()).filter(([, names]) => names.length > 1);
+say(`  ${newTests.length}/${file.length} ligne(s) empilÃ©e(s) ; ${stacked.length} id(s) portent maintenant PLUSIEURS lignes :`);
+stacked.forEach(([id, names]) => say(`      ${id} â†’ ${names.join(' + ')}`));
+leak('l\'ajout empile une SECONDE ligne portant le mÃªme id d\'expÃ©rience',
+  stacked.map(([id, names]) => `${id} : ${names.join(' + ')}`).join('\n'),
+  stacked.length > 0);
+/* LA MÃ‰MOIRE DU POSTE â€” App.jsx 2009-2018 : une Map par dataset, clÃ© = experimentKey
+   (donc l'ID) : UNE SEULE entrÃ©e par id, la derniÃ¨re vue gagne. */
+const remember = (list) => {
+  const map = new Map();
+  list.forEach((t) => { const k = T.experimentKey(t); if (k) map.set(k, t); });
+  return Array.from(map.values());
+};
+
+/* La copie PARTAGÃ‰E, Ã©crite par un poste qui n'a pas encore vu la reprise. */
+const staleCopy = base.slice();
+const rescuedNames = newTests.map((t) => t.name);
+
+say('');
+say('â‘£ LA RELECTURE (ðŸ”„ Refresh, rÃ©ouverture) â€” `mergeExperimentsAddOnly` (garde ID-keyÃ©e)');
+/* La copie relue est adoptÃ©e PAR ID (experimentTombstones.js : `list.concat(added)`) : une
+   ligne de la copie qui porte le MÃŠME id qu'une ligne reprise CHASSE celle-ci de l'Ã©cran.
+   Et `added`, la seule chose que la relecture DIT, ne nomme que ce qu'elle a GARDÃ‰ : la ligne
+   qui part n'est donc nommÃ©e nulle part â€” ni par le dialogue, ni par l'Ã©cran. */
+const mergedRead = T.mergeExperimentsAddOnly(remember(screen), staleCopy, []);
+const lostOnRead = rescuedNames.filter((n) => !mergedRead.tests.some((t) => t.name === n));
+const saidOnRead = mergedRead.added.length ? `Â« ${mergedRead.added.map((t) => t.name).join(' Â», Â« ')} Â»` : '';
+say(`  lignes Ã  l'Ã©cran : ${screen.length} avant la relecture â†’ ${mergedRead.tests.length} aprÃ¨s`);
+say(`  ce que la relecture GARDE (added â€” la seule chose qu'elle DIT) : ${saidOnRead || '(rien)'}`);
+say(`    â†’ ${saidOnRead ? "le dialogue ne parle que de ces lignes-lÃ , jamais de celles qui ont quittÃ© l'Ã©cran" : 'added vide : aucun dialogue'}`);
+say(`  expÃ©riences reprises ABSENTES de l'Ã©cran : ${lostOnRead.length ? lostOnRead.join(', ') : 'â€”'}`);
+leak('la relecture REMPLACE la ligne reprise par celle de MÃŠME ID portÃ©e par la copie (son nom d\'avant) : elle quitte l\'Ã©cran SANS ÃŠTRE NOMMÃ‰E',
+  lostOnRead.length
+    ? `${lostOnRead.join(', ')} â€” la copie relue porte leur ID sous un autre nom : le verrou croit la ligne Â« dÃ©jÃ  lÃ  Â»`
+    : '',
+  lostOnRead.length > 0);
+/* Le cas le plus favorable : la mÃ©moire ne porte QUE ce que la reprise vient d'ajouter
+   (App.jsx, `rememberExperiments(targetId, newTests)`) â€” mÃªme lÃ , l'id est dÃ©jÃ  dans
+   la copie relue : rien n'est gardÃ©. */
+const mergedFresh = T.mergeExperimentsAddOnly(remember(newTests), staleCopy, []);
+const lostEvenFresh = rescuedNames.filter((n) => !mergedFresh.tests.some((t) => t.name === n));

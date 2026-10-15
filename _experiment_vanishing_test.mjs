@@ -170,10 +170,12 @@ has(APP, 'forgetExperiments(targetId, loadedTests);',
   'un REMPLACEMENT volontaire (♻️) est le seul geste qui vide la mémoire du poste');
 lacks(APP, 'const newTests = loadedTests.map((p) => ({',
   'l’ajout ne donne plus un id NEUF à chaque copie (le défaut qui perdait lien de projet et dossier Drive)');
-has(APP, 'newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });',
-  'l’ajout CONSERVE l’id d’origine de l’expérience restaurée');
-has(APP, 'if (key && existingKeys.has(key)) return;',
-  'une expérience que le dataset porte déjà n’entre jamais deux fois (aucun jumeau à supprimer)');
+lacks(APP, 'freshId()',
+  '…et il n’existe plus DEUX formules d’id (celle de l’écran et celle du verrou) : ce désaccord est ce qui empilait une ligne de trop');
+has(APP, 'const { tests: newTests, skipped: alreadyThere } = experimentsToAdd(testsRef.current, loadedTests);',
+  'l’ajout CONSERVE l’id d’origine et s’appuie sur la règle d’IDENTITÉ du verrou (l’ID d’abord, le nom à défaut) au lieu de la sienne (le nom) — l’écran empilait un jumeau que la relecture suivante effaçait sans un mot');
+has(APP, 'describeSkippedAdditions(alreadyThere)',
+  'ce que l’ajout a ÉCARTÉ est DIT (une reprise qui ne fait rien ne doit pas ressembler à une panne)');
 has(APP, 'recordExperimentRevivals(newTests, targetId);',
   'un retour volontaire LÈVE la suppression (sinon le verrou reprendrait l’expérience restaurée)');
 has(APP, 'const testRowPicks = (rowsPicked && Array.isArray(rowsPicked[TESTS_SECTION_ID]))',
@@ -200,8 +202,8 @@ has(LOAD, 'export const pickExperimentRows = (tests, picks) => {',
   'l’application du choix ligne à ligne est pure elle aussi');
 has(LOAD, 'export const testGroupKey = (t) => {',
   'l’identité d’une ligne est le NOM (la règle des pages du dataset)');
-has(LOAD, "import { experimentKey } from './experimentTombstones';",
-  'l’identité de repli est IMPORTÉE du verrou (une seule définition, jamais deux)');
+has(LOAD, "import { experimentKey, experimentId } from './experimentTombstones';",
+  'l’identité de repli est IMPORTÉE du verrou (une seule définition, jamais deux) — et l’ID aussi : « déjà dans la base » se dit par ID ou par nom');
 
 const L = await import('./src/utils/loadSelection.js');
 const C1 = { id: 't1', name: 'Aphids', projectNames: ['GEC'], operator: 'Nicola', date: '2026-01-05' };
@@ -275,6 +277,84 @@ eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3],
 eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)
   .filter((r) => r.picked && !r.inBase).map((r) => r.key)).map((t) => t.id), ['t1', 't2'],
   '…et ne cocher que ce qui MANQUE (ce que dit la ligne « already in the base ») ne ramène que ça');
+
+/* ── 8. DEUX IDENTITÉS, UNE SEULE RÈGLE (le 3ᵉ défaut du rapport) ─────────
+   LE RAPPORT, mot pour mot : « le esperienze pdb_/Pd1 recuperate spariscono di
+   nuovo ». La cause n'était pas UNE règle fausse, mais DEUX identités qui ne
+   s'accordaient pas : l'ÉCRAN et la fenêtre d'import (➕) reconnaissaient une
+   expérience par son NOM (`testGroupKey`), les GARDES (relecture, verrou
+   d'écriture, 🗑) par son ID (`experimentKey`). La reprise du Drive ramène les
+   noms d'aujourd'hui AVEC les ids d'un autre nom (« Test 87 » ≡ « pdb_ » ≡
+   « pdb_CDK2_CyclinA ») : l'ajout empilait donc un JUMEAU (même id, autre nom),
+   et la relecture suivante — ID-keyée — en effaçait une ligne sans le dire.
+   Une seule règle désormais, définie une fois et importée partout : L'ID
+   D'ABORD, le nom à défaut. Second repère : le NOMBRE de lignes d'un id
+   distingue un RENOMMAGE (une ligne reste une ligne) d'une SUPPRESSION. */
+const OLD = { id: 'r7', name: 'pdb_', datasetId: DS };
+const NEW = { id: 'r7', name: 'Pd1', datasetId: DS };
+const addRenamed = T.experimentsToAdd([OLD], [NEW]);
+eq([addRenamed.tests.length, addRenamed.skipped.length], [0, 1],
+  '➕ ne remet pas dans le dataset l’expérience que son ID y désigne DÉJÀ sous un autre nom (c’est la même expérience, renommée : la seconde ligne serait le jumeau que la relecture efface)');
+eq(addRenamed.skipped[0].by, 'id',
+  '…et l’écart est dit pour ce qu’il est : le MÊME id sous un autre nom');
+eq(addRenamed.skipped[0].twin, OLD, '…la ligne du dataset est nommée à l’écran, jamais un jumeau muet');
+ok(T.describeSkippedAdditions(addRenamed.skipped).includes('pdb_')
+  && T.describeSkippedAdditions(addRenamed.skipped).includes('Pd1'),
+  'le compte-rendu NOMME les deux noms (« Pd1 » = « pdb_ ») : une reprise qui ne fait rien s’explique au lieu de ressembler à une panne');
+eq(T.describeSkippedAdditions([]), '', 'aucun écart → aucune phrase (le cas normal reste muet)');
+const addSameName = T.experimentsToAdd([{ id: 'r8', name: 'Bees' }], [{ id: 'r9', name: 'Bees' }]);
+eq([addSameName.tests.length, addSameName.skipped[0].by], [0, 'name'],
+  '…et deux entrées de MÊME nom restent une seule expérience (le nom est alors l’identité : des ids différents ne font pas deux essais de ce nom)');
+const addNew = T.experimentsToAdd([OLD], [{ id: 'r9', name: 'Aphids' }, { name: 'Senza id' }]);
+eq([addNew.tests.length, addNew.skipped.length], [2, 0],
+  'une expérience ABSENTE entre (le geste n’oublie rien de ce qui doit entrer)');
+eq(String(addNew.tests[0].id), 'r9', '…avec son ID D’ORIGINE (le lien de projet et le dossier Drive restent attachés)');
+ok(addNew.tests[1].id && addNew.tests[1].id !== 'r9',
+  'une entrée SANS id en reçoit un — la formule du verrou, plus celle d’App.jsx : une seule définition');
+eq(addNew.tests[1].name, 'Senza id', '…et rien d’autre n’est changé');
+const addDup = T.experimentsToAdd([], [{ id: 'r9', name: 'Aphids' }, { id: 'r9', name: 'Aphids bis' }]);
+eq(addDup.tests.length, 1,
+  'deux entrées du MÊME fichier portant le même id ne font qu’UNE ligne (la règle « un id, une ligne » tient aussi pour ce que le geste ajoute)');
+
+/* La fenêtre d'import dit « already in the base » par ID ou par NOM : sans l'id,
+   elle proposait « à ajouter » l'expérience que le dataset désigne déjà. */
+eq(L.experimentRowChoices([NEW], [OLD], false)[0].inBase, true,
+  'la fenêtre d’import marque « déjà là » l’expérience dont l’ID est présent sous son nom d’AVANT');
+eq(L.experimentRowChoices([OLD], [OLD], false)[0].inBase, true, '…et par le nom, immédiatement');
+
+/* Le 🗑 — un RENOMMAGE n'est pas une SUPPRESSION, et une suppression ne parle que
+   de SON identité. Deux lignes d'un même id (écrites par une version antérieure
+   du programme) : en retirer une laissait l'id « survivre » via l'autre, donc
+   AUCUN record — et le verrou reprenait l'expérience supprimée. */
+fakeStore.clear();
+T.recordExperimentDeletions([OLD], [{ ...OLD, name: 'Pd1' }], DS, 4000);
+eq(T.loadExperimentDeletions().length, 0,
+  'un renommage (même id, même NOMBRE de lignes) n’enregistre AUCUNE suppression — sinon l’expérience renommée serait retirée de la copie qu’on écrit');
+T.recordExperimentDeletions([OLD, NEW], [OLD], DS, 4100);
+eq(T.loadExperimentDeletions().map((r) => [r.id, r.name]), [['r7', 'Pd1']],
+  '…mais retirer L’UNE DES DEUX lignes d’un même id EST une suppression, enregistrée sous le nom qui a quitté l’écran');
+eq(T.withoutDeletedExperiments([{ id: 'r9', name: 'Aphids', datasetId: DS }], T.loadExperimentDeletions()).length, 1,
+  '…et ce record ne parle que de son identité : aucune autre expérience n’est touchée');
+
+/* La levée (🛡) doit battre l'horloge d'un AUTRE poste : la suppression qu'elle
+   défait a été datée ailleurs, parfois « plus tard » que ce poste-ci (60 s
+   d'avance suffisaient à décider à la place de l'utilisateur). */
+fakeStore.clear();
+const SKEW0 = 1_700_000_000_000;
+T.recordExperimentDeletions([C], [], DS, SKEW0);
+const skewedBack = T.recordExperimentRevivals([C], DS, SKEW0 - 60_000);
+eq(T.withoutRevivedExperiments(
+  T.deletionsForDataset(skewedBack.deletions, DS),
+  T.revivalsForDataset(skewedBack.revivals, DS),
+).length, 0,
+  'la levée écrite par un poste dont l’horloge RETARDE de 60 s lève quand même la suppression qu’elle défait (sinon la copie écrite repartait sans l’expérience reprise : le défaut même)');
+const skewedAhead = T.recordExperimentRevivals([C], DS, SKEW0 + 60_000);
+T.recordExperimentDeletions([C], [], DS, SKEW0 + 120_000);
+eq(T.withoutRevivedExperiments(
+  T.deletionsForDataset(T.loadExperimentDeletions(), DS),
+  T.revivalsForDataset(skewedAhead.revivals, DS),
+).length, 1,
+  '…et supprimer APRÈS avoir restauré supprime pour de bon, même si la levée a été datée par une horloge en retard');
 
 /* ── Bilan ─────────────────────────────────────────────────────────────── */
 console.log(`_experiment_vanishing_test.mjs — ${passed} assertions OK (le esperienze non spariscono più: lettura in aggiunta, scrittura sotto verrou, e il ritorno di UNA esperienza da una copia è CHIRURGICO — una riga per esperienza, con il suo id)`);

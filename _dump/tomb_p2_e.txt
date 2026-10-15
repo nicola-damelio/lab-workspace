@@ -1,0 +1,96 @@
+465:       }
+466:       return;
+467:     }
+468:     if (!key || seen.has(key)) return;
+469:     if (isExperimentDeleted(t, records)) return;
+470:     seen.add(key);
+471:     added.push(t);
+472:     fresh.push(t);
+473:   });
+474:   const tests = withoutDeletedExperiments(fresh, records);
+475:   return { tests, added, aliases, collapsed };
+476: };
+477: 
+478: /* ---------------------------------------------------------------------------
+479:  * 📣 CE QUI S'EST PASSÉ SE DIT (jamais un enregistrement muet)
+480:  * ------------------------------------------------------------------------ */
+481: 
+482: const namesOf = (list) => (Array.isArray(list) ? list : [])
+483:   .map((t) => nameOf(t) || `#${idOf(t)}`)
+484:   .filter(Boolean)
+485:   .slice(0, 6)
+486:   .join(', ');
+487: 
+488: /** Le compte-rendu d'un ENREGISTREMENT qui a failli perdre des expériences. */
+489: export const describeUnrecordedDrops = (rescued) => (
+490:   Array.isArray(rescued) && rescued.length
+491:     ? `⚠ The dataset copy that was about to be written did NOT carry ${rescued.length} experiment(s) `
+492:       + `(${namesOf(rescued)}) and no deletion was recorded for them: they were KEPT. `
+493:       + 'This is the signature of a stale copy (another workstation, or an offline read): '
+494:       + 'reopen the dataset there and let it publish again (🔄 Refresh). An experiment you really want gone '
+495:       + 'is deleted in the Experiments page (🗑), so that it is forgotten everywhere.'
+496:     : ''
+497: );
+498: 
+499: /** Le compte-rendu du verrou à DISTANCE : la copie partagée portait des
+500:  *  expériences que ce poste n'avait JAMAIS vues (un collègue les a créées entre
+501:  *  deux enregistrements, sur un autre poste). Elles sont REMISES : un
+502:  *  enregistrement ne les efface plus. */
+503: export const describeDistantRescue = (rescued) => (
+504:   Array.isArray(rescued) && rescued.length
+505:     ? `⚠ The SHARED copy of this dataset carried ${rescued.length} experiment(s) this device had `
+506:       + `never seen (${namesOf(rescued)}): a save was about to erase them from the document everyone `
+507:       + 'reads. They were KEPT and written back with your copy. This is what a colleague working on '
+508:       + 'the same dataset from another workstation looks like — reopen the dataset here (🔄 Refresh) '
+509:       + 'to see their experiments.'
+510:     : ''
+511: );
+512: 
+513: /** Le compte-rendu d'une LECTURE qui a gardé des expériences absentes de la copie relue. */
+514: export const describeKeptExperiments = (added) => (
+515:   Array.isArray(added) && added.length
+516:     ? `⚠ The shared copy did not carry ${added.length} experiment(s) this device already knows `
+517:       + `(${namesOf(added)}): they were KEPT here — a re-read never erases. If the dataset must lose them `
+518:       + 'for good, delete them in the Experiments page (🗑).'
+519:     : ''
+520: );
+521: 
+522: /** Le compte-rendu des expériences retirées parce que leur suppression est
+523:  *  enregistrée (ici ou sur un autre poste — le record voyage). */
+524: export const describeRemovedExperiments = (count) => (
+525:   Number(count) > 0
+526:     ? `${count} experiment(s) whose deletion is recorded were removed from the saved copy (their 🗑 travels with the dataset).`
+527:     : ''
+528: );
+529: 
+530: /* ---------------------------------------------------------------------------
+531:  * 💾 MAGASIN — les deux clés localStorage (App.jsx ne fait que l'entrée/sortie)
+532:  * ------------------------------------------------------------------------ */
+533: 
+534: const storeOf = () => {
+535:   try {
+536:     return typeof globalThis !== 'undefined' && globalThis.localStorage ? globalThis.localStorage : null;
+537:   } catch {
+538:     return null;   // navigation privée : la règle reste en mémoire pour la session
+539:   }
+540: };
+541: 
+542: const readStored = (key, norm) => {
+543:   const store = storeOf();
+544:   if (!store) return [];
+545:   try {
+546:     return norm(JSON.parse(store.getItem(key) || '[]'));
+547:   } catch {
+548:     return [];
+549:   }
+550: };
+551: 
+552: const writeStored = (key, list) => {
+553:   const store = storeOf();
+554:   if (!store) return list;
+555:   try { store.setItem(key, JSON.stringify(list)); } catch { /* plein / privé : best-effort */ }
+556:   return list;
+557: };
+558: 
+559: export const loadExperimentDeletions = () => readStored(DELETED_EXPERIMENTS_KEY, normalizeDeletions);
+560: export const loadExperimentRevivals = () => readStored(REVIVED_EXPERIMENTS_KEY, normalizeRevivals);

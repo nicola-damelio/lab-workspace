@@ -1,0 +1,101 @@
+200: 
+201: export const deletionsForDataset = (list, datasetArg) => forDataset(list, normalizeDeletions, datasetArg);
+202: export const revivalsForDataset = (list, datasetArg) => forDataset(list, normalizeRevivals, datasetArg);
+203: 
+204: /* ---------------------------------------------------------------------------
+205:  * 🗑 CE QUI EST SUPPRIMÉ EST SUPPRIMÉ (et ne revient pas par une relecture)
+206:  * ------------------------------------------------------------------------ */
+207: 
+208: /** Cette expérience a-t-elle une suppression ENREGISTRÉE (et non levée) ? */
+209: export const isExperimentDeleted = (test, deletions) => {
+210:   const key = experimentKey(test);
+211:   if (!key) return false;
+212:   return normalizeDeletions(deletions).some((d) => sameStamped(d, test));
+213: };
+214: 
+215: /** La liste sans les expériences dont la suppression est enregistrée. */
+216: export const withoutDeletedExperiments = (tests, deletions) => {
+217:   const items = (Array.isArray(tests) ? tests : []).filter(Boolean);
+218:   const records = normalizeDeletions(deletions);
+219:   if (!records.length) return items;
+220:   return items.filter((t) => !isExperimentDeleted(t, records));
+221: };
+222: 
+223: /* ---------------------------------------------------------------------------
+224:  * ⛔ LE VERROU : « l'enregistrement a failli effacer des expériences »
+225:  *
+226:  * Le même contrat que `protectUntombstoned` pour les projets : ce qui manque à
+227:  * une écriture SANS record de suppression est REMIS. Une suppression reste une
+228:  * suppression (son record est écrit par le geste 🗑) ; une perte accidentelle,
+229:  * elle, ne passe plus.
+230:  * ------------------------------------------------------------------------ */
+231: 
+232: /** Les expériences qu'une écriture FERAIT DISPARAÎTRE SANS AUCUN RECORD.
+233:  *  C'est la signature d'une perte de données, jamais d'une suppression.
+234:  *  @param {Array} known    ce que ce poste connaît du dataset (voir App.jsx)
+235:  *  @param {Array} outgoing ce que l'appelant s'apprête à écrire
+236:  *  @param {Array} deletions les suppressions enregistrées (déjà sans les levées)
+237:  *  @returns {Array} les expériences à REMETTRE dans la liste écrite
+238:  */
+239: export const unrecordedDrops = (known, outgoing, deletions) => {
+240:   const items = (Array.isArray(known) ? known : []).filter(Boolean);
+241:   const kept = new Set(
+242:     (Array.isArray(outgoing) ? outgoing : []).filter(Boolean).map(experimentKey).filter(Boolean)
+243:   );
+244:   const records = normalizeDeletions(deletions);
+245:   return items.filter((t) => {
+246:     const key = experimentKey(t);
+247:     if (!key) return false;                     // pas identifiable : jamais « remise »
+248:     if (kept.has(key)) return false;            // déjà dans la liste écrite
+249:     return !isExperimentDeleted(t, records);    // …et sans record : elle est REMISE
+250:   });
+251: };
+252: 
+253: /** La liste à écrire, corrigée : rien de ce qui n'est pas supprimé ne peut
+254:  *  disparaître. Rend `{ tests, rescued, removed, collapsed }` — `rescued` sont les
+255:  *  expériences remises (l'appelant peut le DIRE au lieu de les avoir perdues),
+256:  *  `removed` celles retirées parce que leur suppression est enregistrée, et
+257:  *  `collapsed` les jumeaux (même id, deux noms) qu'une version antérieure avait
+258:  *  laissés s'écrire : la copie qui part n'en porte plus deux.
+259:  *  L'ordre de la liste écrite est conservé, les expériences remises suivent. */
+260: export const protectUnrecordedDrops = (known, outgoing, deletions) => {
+261:   /* ❗ CE QUI PART EST SANS JUMEAUX : le payload voyage ENTIER, donc publier deux
+262:      lignes pour un id publie le jumeau que la relecture suivante effacera — une
+263:      des deux lignes, en silence. L'effondrement se DIT (voir
+264:      `describeCollapsedExperiments`) : ce n'est pas une perte, c'est une ligne de
+265:      trop pour une même expérience. */
+266:   const { tests: list, collapsed } = collapseExperimentTwins(outgoing);
+267:   const records = normalizeDeletions(deletions);
+268:   const rescued = unrecordedDrops(known, list, records);
+269:   let out = list;
+270:   if (rescued.length) {
+271:     const seen = new Set(list.map(experimentKey).filter(Boolean));
+272:     out = list.slice();
+273:     rescued.forEach((t) => {
+274:       const key = experimentKey(t);
+275:       if (key && seen.has(key)) return;
+276:       if (key) seen.add(key);
+277:       out.push(t);
+278:     });
+279:   }
+280:   const tests = withoutDeletedExperiments(out, records);
+281:   return { tests, rescued, removed: out.length - tests.length, collapsed };
+282: };
+283: 
+284: /** ⛔ LE MÊME VERROU, VU DE L'AUTRE CÔTÉ DU FIL — « la copie PARTAGÉE qu'on
+285:  *  s'apprête à écraser ».
+286:  *
+287:  *  `protectUnrecordedDrops` protège ce que CE poste connaît. Reste le cas du
+288:  *  rapport : une expérience créée sur un AUTRE poste pendant que celui-ci
+289:  *  gardait une copie plus ancienne. Ce poste-ci ne l'a jamais vue, donc sa
+290:  *  mémoire ne peut pas la reprendre… alors que l'enregistrement l'effacerait
+291:  *  quand même du document partagé (le payload voyage ENTIER : le vider de ce
+292:  *  qu'on ne connaît pas est exactement ce qu'aucun enregistrement n'a le droit
+293:  *  de faire).
+294:  *
+295:  *  D'où ce second verrou, appliqué AVANT d'écrire (App.jsx,
+296:  *  `guardDistantExperiments`) : la copie DISTANTE — le document partagé — est
+297:  *  relue, et ce qu'elle porte et que nous n'avons pas est REMIS, tant qu'aucune
+298:  *  suppression n'est enregistrée pour lui (une 🗑 faite ailleurs reste une 🗑).
+299:  *
+300:  *  @param {Array} distant  les expériences de la copie partagée (relue)

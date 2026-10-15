@@ -1,0 +1,56 @@
+4080:      protéger et la dernière minute du travail ne doit pas attendre. Appelée par
+4081:      le minuteur (`setTimeout(runSave, 1500)`), elle est en mode arrière-plan. */
+4082:   const runSave = async (urgent = false) => {
+4083:     /* Cette sauvegarde a été VIDÉE (pagehide/◀) ou remplacée par une plus récente
+4084:        du même dataset : elle se tait — jamais deux envois de la même base. */
+4085:     if (pendingDatasetSaveRef.current !== runSave) return;
+4086:     pendingDatasetSaveRef.current = null;
+4087:     /* Le ticket de cette écriture : une écriture d'arrière-plan plus ancienne
+4088:        (dataset quitté juste avant, voir `saveLeavingDataset`) devient caduque et
+4089:        se taira au lieu d'écraser celle-ci. */
+4090:     const writeTicket = takeWriteTicket(currentDatasetId);
+4091:     try {
+4092:       /* 🖐 LA PAGE D'ABORD, LE TRAVAIL ENSUITE (voir utils/backgroundWork) : le
+4093:          clic de l'utilisateur est déjà commité par React, et ce qui suit coûte
+4094:          cher sur le fil principal (la compression : 0,9 s pour 6 Mo, mesuré).
+4095:          Ce geste laisse la page demandée se peindre AVANT que la sauvegarde ne
+4096:          commence — c'est tout ce que « sauvegarder en arrière-plan » veut dire
+4097:          ici : personne n'attend devant l'écran. */
+4098:       if (!urgent) await yieldToPaint();
+4099:       const rawData = { ...latestDataRef.current, ...cloudProjectsPayload() };
+4100:       /* ⛔ LE VERROU DES EXPÉRIENCES (voir guardExperimentsForWrite) : la liste
+4101:          écrite ici ne peut pas perdre une expérience qui n'a pas de suppression
+4102:          enregistrée. C'est CE point qui rend le scénario du rapport impossible —
+4103:          l'enregistrement automatique publiait sans un mot une liste plus courte
+4104:          que celle du document partagé. */
+4105:       rawData.tests = guardExperimentsForWrite(rawData.tests);
+4106:       /* …PUIS LA COPIE PARTAGÉE (voir guardDistantExperiments) : ce qu'un autre
+4107:          poste a créé entre-temps — et que ce poste n'a jamais vu — ne peut plus
+4108:          être effacé par cet enregistrement. */
+4109:       rawData.tests = await guardDistantExperiments(rawData.tests);
+4110:       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
+4111:       /* 🧵 …et il ATTEND la charge, parce qu'elle arrive désormais d'un AUTRE
+4112:          fil (voir utils/datasetCompression) : le fil principal, lui, n'a fait
+4113:          que `JSON.stringify` (72 ms pour 6,2 Mo, mesuré) pendant que le worker
+4114:          compresse. `urgent` = plus d'écran à protéger → tout se fait ici. */
+4115:       const compressedPayload = await compressDatasetForSave(rawData, urgent);
+4116: 
+4117:       const updatedPayload = {
+4118:         title: datasetTitle || 'Untitled Dataset',
+4119:         subtitle: datasetSubtitle || '',
+4120:         date: rawData.tests?.[0]?.date || new Date().toISOString().split('T')[0],
+4121:         testCount: rawData.tests?.length || 0,
+4122:         updatedAt: window.firebase
+4123:           ? window.firebase.firestore.FieldValue.serverTimestamp()
+4124:           : Date.now(),
+4125:         payload: compressedPayload,
+4126:         isCompressed: true
+4127:       };
+4128:       /* Le CONTENU du dataset part aussi sur le Drive
+4129:          (_workspace/datasets/<id>.json) : c'est ce qui permet de le rouvrir sur
+4130:          un autre poste, ou quand Firestore ne répond pas. Best-effort : la
+4131:          sauvegarde Firestore et l'instantané HTML restent la référence. */
+4132:       if (!holdsLatestWriteTicket(currentDatasetId, writeTicket)) return;
+4133:       mirrorDatasetContent(currentDatasetId, updatedPayload);
+4134:       /* LE DRIVE EST LE MIROIR COMPLET DU DATASET : le contenu du dataset, ses
+4135:          projets, ses expériences (instance/section/sous-section), ses storages,

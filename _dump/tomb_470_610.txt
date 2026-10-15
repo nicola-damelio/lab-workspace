@@ -1,0 +1,141 @@
+470:     seen.add(key);
+471:     added.push(t);
+472:     fresh.push(t);
+473:   });
+474:   const tests = withoutDeletedExperiments(fresh, records);
+475:   return { tests, added, aliases, collapsed };
+476: };
+477: 
+478: /* ---------------------------------------------------------------------------
+479:  * 📣 CE QUI S'EST PASSÉ SE DIT (jamais un enregistrement muet)
+480:  * ------------------------------------------------------------------------ */
+481: 
+482: const namesOf = (list) => (Array.isArray(list) ? list : [])
+483:   .map((t) => nameOf(t) || `#${idOf(t)}`)
+484:   .filter(Boolean)
+485:   .slice(0, 6)
+486:   .join(', ');
+487: 
+488: /** Le compte-rendu d'un ENREGISTREMENT qui a failli perdre des expériences. */
+489: export const describeUnrecordedDrops = (rescued) => (
+490:   Array.isArray(rescued) && rescued.length
+491:     ? `⚠ The dataset copy that was about to be written did NOT carry ${rescued.length} experiment(s) `
+492:       + `(${namesOf(rescued)}) and no deletion was recorded for them: they were KEPT. `
+493:       + 'This is the signature of a stale copy (another workstation, or an offline read): '
+494:       + 'reopen the dataset there and let it publish again (🔄 Refresh). An experiment you really want gone '
+495:       + 'is deleted in the Experiments page (🗑), so that it is forgotten everywhere.'
+496:     : ''
+497: );
+498: 
+499: /** Le compte-rendu du verrou à DISTANCE : la copie partagée portait des
+500:  *  expériences que ce poste n'avait JAMAIS vues (un collègue les a créées entre
+501:  *  deux enregistrements, sur un autre poste). Elles sont REMISES : un
+502:  *  enregistrement ne les efface plus. */
+503: export const describeDistantRescue = (rescued) => (
+504:   Array.isArray(rescued) && rescued.length
+505:     ? `⚠ The SHARED copy of this dataset carried ${rescued.length} experiment(s) this device had `
+506:       + `never seen (${namesOf(rescued)}): a save was about to erase them from the document everyone `
+507:       + 'reads. They were KEPT and written back with your copy. This is what a colleague working on '
+508:       + 'the same dataset from another workstation looks like — reopen the dataset here (🔄 Refresh) '
+509:       + 'to see their experiments.'
+510:     : ''
+511: );
+512: 
+513: /** Le compte-rendu d'une LECTURE qui a gardé des expériences absentes de la copie relue. */
+514: export const describeKeptExperiments = (added) => (
+515:   Array.isArray(added) && added.length
+516:     ? `⚠ The shared copy did not carry ${added.length} experiment(s) this device already knows `
+517:       + `(${namesOf(added)}): they were KEPT here — a re-read never erases. If the dataset must lose them `
+518:       + 'for good, delete them in the Experiments page (🗑).'
+519:     : ''
+520: );
+521: 
+522: /** Le compte-rendu des expériences retirées parce que leur suppression est
+523:  *  enregistrée (ici ou sur un autre poste — le record voyage). */
+524: export const describeRemovedExperiments = (count) => (
+525:   Number(count) > 0
+526:     ? `${count} experiment(s) whose deletion is recorded were removed from the saved copy (their 🗑 travels with the dataset).`
+527:     : ''
+528: );
+529: 
+530: /* ---------------------------------------------------------------------------
+531:  * 💾 MAGASIN — les deux clés localStorage (App.jsx ne fait que l'entrée/sortie)
+532:  * ------------------------------------------------------------------------ */
+533: 
+534: const storeOf = () => {
+535:   try {
+536:     return typeof globalThis !== 'undefined' && globalThis.localStorage ? globalThis.localStorage : null;
+537:   } catch {
+538:     return null;   // navigation privée : la règle reste en mémoire pour la session
+539:   }
+540: };
+541: 
+542: const readStored = (key, norm) => {
+543:   const store = storeOf();
+544:   if (!store) return [];
+545:   try {
+546:     return norm(JSON.parse(store.getItem(key) || '[]'));
+547:   } catch {
+548:     return [];
+549:   }
+550: };
+551: 
+552: const writeStored = (key, list) => {
+553:   const store = storeOf();
+554:   if (!store) return list;
+555:   try { store.setItem(key, JSON.stringify(list)); } catch { /* plein / privé : best-effort */ }
+556:   return list;
+557: };
+558: 
+559: export const loadExperimentDeletions = () => readStored(DELETED_EXPERIMENTS_KEY, normalizeDeletions);
+560: export const loadExperimentRevivals = () => readStored(REVIVED_EXPERIMENTS_KEY, normalizeRevivals);
+561: export const saveExperimentDeletions = (list) => writeStored(DELETED_EXPERIMENTS_KEY, normalizeDeletions(list));
+562: export const saveExperimentRevivals = (list) => writeStored(REVIVED_EXPERIMENTS_KEY, normalizeRevivals(list));
+563: 
+564: /** ADOPTER les suppressions portées par une copie (payload du dataset,
+565:  *  `_workspace/state.json`, fichier HTML) : elles s'ajoutent aux nôtres — une
+566:  *  suppression faite sur un autre poste vaut ici aussi, sinon l'expérience
+567:  *  qu'il a supprimée serait republiée par ce poste-ci. */
+568: export const adoptExperimentDeletions = (list) =>
+569:   saveExperimentDeletions([...(Array.isArray(list) ? list : []), ...loadExperimentDeletions()]);
+570: 
+571: /** ADOPTER les levées portées par une copie (même règle). */
+572: export const adoptExperimentRevivals = (list) =>
+573:   saveExperimentRevivals([...(Array.isArray(list) ? list : []), ...loadExperimentRevivals()]);
+574: 
+575: /** LE GESTE : tout ce qui a disparu entre `before` et `after` par une ACTION de
+576:  *  l'utilisateur (suppression 🗑, undo/redo…) laisse sa suppression enregistrée
+577:  *  — c'est ce qui distingue une suppression d'une perte. Rend la liste à jour
+578:  *  des suppressions. */
+579: export const recordExperimentDeletions = (before, after, datasetArg, deletedAt = Date.now()) => {
+580:   const still = new Set(
+581:     (Array.isArray(after) ? after : []).filter(Boolean).map(experimentKey).filter(Boolean)
+582:   );
+583:   const gone = (Array.isArray(before) ? before : []).filter((t) => {
+584:     const key = experimentKey(t);
+585:     return !!key && !still.has(key);
+586:   });
+587:   /* Rien n'a disparu (le cas de très loin le plus fréquent : une frappe dans une
+588:      page d'expérience) : on ne réécrit même pas la clé. */
+589:   if (!gone.length) return loadExperimentDeletions();
+590:   const scope = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
+591:   let list = loadExperimentDeletions();
+592:   gone.forEach((t) => { list = addDeletion(list, { ...t, datasetId: scope || datasetOf(t) }, deletedAt); });
+593:   return saveExperimentDeletions(list);
+594: };
+595: 
+596: /** LE RETOUR VOLONTAIRE : une restauration (📂 Load HTML → restauration ciblée
+597:  *  d'une expérience) lève les suppressions des expériences qu'elle ramène, à sa
+598:  *  date — sans quoi le verrou d'écriture reprendrait l'expérience qu'on vient de
+599:  *  restaurer. Rend `{ deletions, revivals }` à jour. */
+600: export const recordExperimentRevivals = (list, datasetArg, revivedAt = Date.now()) => {
+601:   const datasetId = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
+602:   const items = (Array.isArray(list) ? list : []).filter(Boolean);
+603:   let revivals = loadExperimentRevivals();
+604:   items.forEach((t) => {
+605:     revivals = addRevival(revivals, { ...t, datasetId: datasetId || datasetOf(t) }, revivedAt);
+606:   });
+607:   saveExperimentRevivals(revivals);
+608:   return { deletions: loadExperimentDeletions(), revivals };
+609: };
+610: 

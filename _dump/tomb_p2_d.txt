@@ -1,0 +1,101 @@
+310:   let out = list;
+311:   if (rescued.length) {
+312:     const seen = new Set(list.map(experimentKey).filter(Boolean));
+313:     out = list.slice();
+314:     rescued.forEach((t) => {
+315:       const key = experimentKey(t);
+316:       if (key && seen.has(key)) return;
+317:       if (key) seen.add(key);
+318:       out.push(t);
+319:     });
+320:   }
+321:   const tests = withoutDeletedExperiments(out, records);
+322:   return { tests, rescued, removed: out.length - tests.length, collapsed: collapsed.concat(distantCollapsed) };
+323: };
+324: 
+325: /** L'id d'une entrée SANS id : le seul cadeau que ce module se permet
+326:  *  (l'écran en donnait un, chacun de son côté — c'est la même formule). */
+327: const defaultFreshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+328: 
+329: /** UN ID, UNE LIGNE — l'effondrement des JUMEAUX écrits par une version
+330:  *  antérieure du programme : deux lignes (ou plus) portant le MÊME `id` sous des
+331:  *  noms DIFFÉRENTS. C'est le cas des fichiers de reprise : l'objet du Drive garde
+332:  *  l'id de l'expérience À TRAVERS SES RENOMMAGES (« Test 87 » ≡ « pdb_ » ≡
+333:  *  « pdb_CDK2_CyclinA »), donc la même expérience y apparaît sous plusieurs noms
+334:  *  — et une lecture qui identifie par le NOM en garde deux.
+335:  *
+336:  *  La PREMIÈRE ligne gagne (l'ordre de l'écran, celui du payload : rien ne se
+337:  *  réordonne sous les yeux de l'utilisateur), les autres sont rendues dans
+338:  *  `collapsed` — `{ kept, copy }` — pour être DITES : un effondrement muet serait
+339:  *  exactement le défaut que ce module répare.
+340:  *
+341:  *  @returns {{tests:Array, collapsed:Array<{kept:object, copy:object}>}}
+342:  */
+343: export const collapseExperimentTwins = (tests) => {
+344:   const list = (Array.isArray(tests) ? tests : []).filter(Boolean);
+345:   const out = [];
+346:   const byId = new Map();
+347:   const collapsed = [];
+348:   list.forEach((t) => {
+349:     const id = idOf(t);
+350:     if (!id) { out.push(t); return; }            // sans id : rien à effondrer
+351:     const kept = byId.get(id);
+352:     if (!kept) { byId.set(id, t); out.push(t); return; }
+353:     collapsed.push({ kept, copy: t });
+354:   });
+355:   return { tests: out, collapsed };
+356: };
+357: 
+358: /** CE QUI ENTRE À L'ÉCRAN QUAND ON APPLIQUE UNE COPIE (➕ « Add the selected
+359:  *  elements », fenêtre d'import) — la règle d'identité du programme, UNE fois :
+360:  *  une expérience que ce dataset porte DÉJÀ — MÊME ID ou MÊME NOM — n'est jamais
+361:  *  empilée.
+362:  *
+363:  *  ❗ L'ID D'ABORD : c'est lui qui traverse les renommages. Une reprise du Drive
+364:  *  ramène l'expérience sous son nom d'aujourd'hui avec l'id qu'elle a toujours
+365:  *  eu ; l'anti-jumeau qui ne comparait que des NOMS (l'écran avait sa règle, le
+366:  *  verrou la sienne) en empilait une SECONDE ligne, et la relecture suivante —
+367:  *  elle, ID-keyée — effaçait l'une des deux sans un mot.
+368:  *
+369:  *  Entre les lignes du MÊME fichier, le nom ne sépare rien : deux conditions d'un
+370:  *  même essai portent le même nom et des ids différents, et c'est l'essai ENTIER
+371:  *  qui doit revenir. Le nom ne sépare que de ce que le dataset PORTE DÉJÀ.
+372:  *
+373:  *  Rend `{ tests, skipped }` : les lignes à ajouter (avec leur id d'origine ; une
+374:  *  entrée sans id en reçoit un, sinon rien ne pourrait plus la reconnaître) et
+375:  *  celles écartées — `{ test, twin, by }`, `by` valant `'id'` ou `'name'` — pour
+376:  *  que l'appelant le DISE (voir `describeSkippedAdditions`).
+377:  */
+378: export const experimentsToAdd = (current, incoming, makeId) => {
+379:   const screen = (Array.isArray(current) ? current : []).filter(Boolean);
+380:   const ids = new Set(screen.map(idOf).filter(Boolean));
+381:   const names = new Set(screen.map(nameOf).filter(Boolean));
+382:   const newId = typeof makeId === 'function' ? makeId : defaultFreshId;
+383:   const tests = [];
+384:   const skipped = [];
+385:   (Array.isArray(incoming) ? incoming : []).forEach((raw) => {
+386:     const row = raw && typeof raw === 'object' ? raw : { name: String(raw === undefined || raw === null ? '' : raw) };
+387:     const id = idOf(row);
+388:     const name = nameOf(row);
+389:     const twin = id && ids.has(id)
+390:       ? screen.find((t) => idOf(t) === id)
+391:       : (name && names.has(name) ? screen.find((t) => nameOf(t) === name) : null);
+392:     if (twin) { skipped.push({ test: row, twin, by: id && idOf(twin) === id ? 'id' : 'name' }); return; }
+393:     if (id) ids.add(id);
+394:     if (name) names.add(name);
+395:     tests.push(id ? { ...row } : { ...row, id: newId() });
+396:   });
+397:   return { tests, skipped };
+398: };
+399: 
+400: /** UNE LECTURE N'EFFACE PLUS : la copie relue (`incoming`) est adoptée telle
+401:  *  quelle, et ce que ce poste connaît (`current`) et qu'elle ne porte pas est
+402:  *  AJOUTÉ à la fin. Les suppressions enregistrées s'appliquent aux deux.
+403:  *
+404:  *  ❗ UN ID, UNE LIGNE — ET L'AUTRE NOM SE DIT. L'id est l'identité qui TRAVERSE
+405:  *  les renommages : la copie relue peut donc porter NOTRE id sous un AUTRE nom (un
+406:  *  poste a renommé l'expérience, ou la reprise du Drive l'a ramenée sous son nom
+407:  *  d'aujourd'hui). Deux lignes pour un même id était le jumeau que la relecture
+408:  *  SUIVANTE, elle, efface par id — la ligne reprise repartait alors sans un mot.
+409:  *  Ici la ligne DE L'ÉCRAN reste (« l'ancien nom ne bouge pas » : l'utilisateur ne
+410:  *  voit rien changer sous ses yeux) et l'autre nom est rendu dans `aliases` pour

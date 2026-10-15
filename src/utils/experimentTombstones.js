@@ -81,6 +81,14 @@ export const experimentKey = (test) => {
   return name ? `name:${name}` : '';
 };
 
+/** L'ID seul d'une expérience ('' quand elle n'en a pas) — l'identité qui TRAVERSE
+ *  les renommages : l'objet du Drive garde l'id d'une expérience pendant que son
+ *  nom change. Exporté pour que l'écran (➕ App.jsx) et la fenêtre d'import
+ *  (`experimentRowChoices`) n'aient pas leur propre variante de la règle : une
+ *  identité, un seul endroit — c'est exactement la divergence nom/id qui laissait
+ *  une expérience reprise repartir en silence. */
+export const experimentId = (test) => idOf(test);
+
 /** La clé d'un RECORD : `<datasetId>::<id>` (ou `<datasetId>::#<nom>` quand le
  *  record n'a pas d'id). L'id seul ne suffit pas — deux datasets peuvent porter
  *  des expériences de même id (copie d'une sauvegarde). */
@@ -243,12 +251,19 @@ export const unrecordedDrops = (known, outgoing, deletions) => {
 };
 
 /** La liste à écrire, corrigée : rien de ce qui n'est pas supprimé ne peut
- *  disparaître. Rend `{ tests, rescued, removed }` — `rescued` sont les
+ *  disparaître. Rend `{ tests, rescued, removed, collapsed }` — `rescued` sont les
  *  expériences remises (l'appelant peut le DIRE au lieu de les avoir perdues),
- *  `removed` celles retirées parce que leur suppression est enregistrée.
+ *  `removed` celles retirées parce que leur suppression est enregistrée, et
+ *  `collapsed` les jumeaux (même id, deux noms) qu'une version antérieure avait
+ *  laissés s'écrire : la copie qui part n'en porte plus deux.
  *  L'ordre de la liste écrite est conservé, les expériences remises suivent. */
 export const protectUnrecordedDrops = (known, outgoing, deletions) => {
-  const list = (Array.isArray(outgoing) ? outgoing : []).filter(Boolean);
+  /* ❗ CE QUI PART EST SANS JUMEAUX : le payload voyage ENTIER, donc publier deux
+     lignes pour un id publie le jumeau que la relecture suivante effacera — une
+     des deux lignes, en silence. L'effondrement se DIT (voir
+     `describeCollapsedExperiments`) : ce n'est pas une perte, c'est une ligne de
+     trop pour une même expérience. */
+  const { tests: list, collapsed } = collapseExperimentTwins(outgoing);
   const records = normalizeDeletions(deletions);
   const rescued = unrecordedDrops(known, list, records);
   let out = list;
@@ -263,7 +278,7 @@ export const protectUnrecordedDrops = (known, outgoing, deletions) => {
     });
   }
   const tests = withoutDeletedExperiments(out, records);
-  return { tests, rescued, removed: out.length - tests.length };
+  return { tests, rescued, removed: out.length - tests.length, collapsed };
 };
 
 /** ⛔ LE MÊME VERROU, VU DE L'AUTRE CÔTÉ DU FIL — « la copie PARTAGÉE qu'on
@@ -285,12 +300,13 @@ export const protectUnrecordedDrops = (known, outgoing, deletions) => {
  *  @param {Array} distant  les expériences de la copie partagée (relue)
  *  @param {Array} outgoing la liste que ce poste s'apprête à écrire
  *  @param {Array} deletions les suppressions enregistrées (déjà sans les levées)
- *  @returns {{tests:Array, rescued:Array, removed:number}}
+ *  @returns {{tests:Array, rescued:Array, removed:number, collapsed:Array}}
  */
 export const protectDistantDrops = (distant, outgoing, deletions) => {
-  const list = (Array.isArray(outgoing) ? outgoing : []).filter(Boolean);
+  const { tests: list, collapsed } = collapseExperimentTwins(outgoing);
+  const { tests: distantList, collapsed: distantCollapsed } = collapseExperimentTwins(distant);
   const records = normalizeDeletions(deletions);
-  const rescued = unrecordedDrops(distant, list, records);
+  const rescued = unrecordedDrops(distantList, list, records);
   let out = list;
   if (rescued.length) {
     const seen = new Set(list.map(experimentKey).filter(Boolean));
@@ -303,29 +319,165 @@ export const protectDistantDrops = (distant, outgoing, deletions) => {
     });
   }
   const tests = withoutDeletedExperiments(out, records);
-  return { tests, rescued, removed: out.length - tests.length };
+  return { tests, rescued, removed: out.length - tests.length, collapsed: collapsed.concat(distantCollapsed) };
+};
+
+/** L'id d'une entrée SANS id : le seul cadeau que ce module se permet
+ *  (l'écran en donnait un, chacun de son côté — c'est la même formule). */
+const defaultFreshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+
+/** UN ID, UNE LIGNE — l'effondrement des JUMEAUX écrits par une version
+ *  antérieure du programme : deux lignes (ou plus) portant le MÊME `id` sous des
+ *  noms DIFFÉRENTS. C'est le cas des fichiers de reprise : l'objet du Drive garde
+ *  l'id de l'expérience À TRAVERS SES RENOMMAGES (« Test 87 » ≡ « pdb_ » ≡
+ *  « pdb_CDK2_CyclinA »), donc la même expérience y apparaît sous plusieurs noms
+ *  — et une lecture qui identifie par le NOM en garde deux.
+ *
+ *  La PREMIÈRE ligne gagne (l'ordre de l'écran, celui du payload : rien ne se
+ *  réordonne sous les yeux de l'utilisateur), les autres sont rendues dans
+ *  `collapsed` — `{ kept, copy }` — pour être DITES : un effondrement muet serait
+ *  exactement le défaut que ce module répare.
+ *
+ *  @returns {{tests:Array, collapsed:Array<{kept:object, copy:object}>}}
+ */
+export const collapseExperimentTwins = (tests) => {
+  const list = (Array.isArray(tests) ? tests : []).filter(Boolean);
+  const out = [];
+  const byId = new Map();
+  const collapsed = [];
+  list.forEach((t) => {
+    const id = idOf(t);
+    if (!id) { out.push(t); return; }            // sans id : rien à effondrer
+    const kept = byId.get(id);
+    if (!kept) { byId.set(id, t); out.push(t); return; }
+    collapsed.push({ kept, copy: t });
+  });
+  return { tests: out, collapsed };
+};
+
+/** CE QUI ENTRE À L'ÉCRAN QUAND ON APPLIQUE UNE COPIE (➕ « Add the selected
+ *  elements », fenêtre d'import) — la règle d'identité du programme, UNE fois :
+ *  une expérience que ce dataset porte DÉJÀ — MÊME ID ou MÊME NOM — n'est jamais
+ *  empilée.
+ *
+ *  ❗ L'ID D'ABORD : c'est lui qui traverse les renommages. Une reprise du Drive
+ *  ramène l'expérience sous son nom d'aujourd'hui avec l'id qu'elle a toujours
+ *  eu ; l'anti-jumeau qui ne comparait que des NOMS (l'écran avait sa règle, le
+ *  verrou la sienne) en empilait une SECONDE ligne, et la relecture suivante —
+ *  elle, ID-keyée — effaçait l'une des deux sans un mot.
+ *
+ *  Entre les lignes du MÊME fichier, le nom ne sépare rien : deux conditions d'un
+ *  même essai portent le même nom et des ids différents, et c'est l'essai ENTIER
+ *  qui doit revenir. Le nom ne sépare que de ce que le dataset PORTE DÉJÀ.
+ *
+ *  Rend `{ tests, skipped }` : les lignes à ajouter (avec leur id d'origine ; une
+ *  entrée sans id en reçoit un, sinon rien ne pourrait plus la reconnaître) et
+ *  celles écartées — `{ test, twin, by }`, `by` valant `'id'` ou `'name'` — pour
+ *  que l'appelant le DISE (voir `describeSkippedAdditions`).
+ */
+export const experimentsToAdd = (current, incoming, makeId) => {
+  const screen = (Array.isArray(current) ? current : []).filter(Boolean);
+  const ids = new Set(screen.map(idOf).filter(Boolean));
+  const names = new Set(screen.map(nameOf).filter(Boolean));
+  const newId = typeof makeId === 'function' ? makeId : defaultFreshId;
+  const tests = [];
+  const skipped = [];
+  (Array.isArray(incoming) ? incoming : []).forEach((raw) => {
+    const row = raw && typeof raw === 'object' ? raw : { name: String(raw === undefined || raw === null ? '' : raw) };
+    const id = idOf(row);
+    const name = nameOf(row);
+    /* ❗ L'ID D'ABORD, ET PARTOUT : dans le dataset ET dans ce que ce même geste
+       vient d'ajouter. Deux entrées d'un même fichier qui portent le même id
+       sont une seule expérience (c'est la règle « un id, une ligne » que la
+       relecture applique, elle) : les empiler ferait la ligne de trop que la
+       relecture suivante effacerait en silence. */
+    const twin = id && ids.has(id)
+      ? (screen.find((t) => idOf(t) === id) || tests.find((t) => idOf(t) === id))
+      : (name && names.has(name) ? screen.find((t) => nameOf(t) === name) : null);
+    if (twin) { skipped.push({ test: row, twin, by: id && idOf(twin) === id ? 'id' : 'name' }); return; }
+    if (id) ids.add(id);
+    if (name) names.add(name);
+    tests.push(id ? { ...row } : { ...row, id: newId() });
+  });
+  return { tests, skipped };
 };
 
 /** UNE LECTURE N'EFFACE PLUS : la copie relue (`incoming`) est adoptée telle
  *  quelle, et ce que ce poste connaît (`current`) et qu'elle ne porte pas est
  *  AJOUTÉ à la fin. Les suppressions enregistrées s'appliquent aux deux.
- *  Rend `{ tests, added }` — `added` sont les expériences gardées parce que la
- *  copie relue ne les portait pas (à DIRE : c'est le signe qu'un autre poste a
- *  publié une liste plus courte). */
+ *
+ *  ❗ UN ID, UNE LIGNE — ET L'AUTRE NOM SE DIT. L'id est l'identité qui TRAVERSE
+ *  les renommages : la copie relue peut donc porter NOTRE id sous un AUTRE nom (un
+ *  poste a renommé l'expérience, ou la reprise du Drive l'a ramenée sous son nom
+ *  d'aujourd'hui). Deux lignes pour un même id était le jumeau que la relecture
+ *  SUIVANTE, elle, efface par id — la ligne reprise repartait alors sans un mot.
+ *  Ici la ligne DE L'ÉCRAN reste (« l'ancien nom ne bouge pas » : l'utilisateur ne
+ *  voit rien changer sous ses yeux) et l'autre nom est rendu dans `aliases` pour
+ *  être DIT — jamais recopié en silence.
+ *
+ *  Rend `{ tests, added, aliases, collapsed }` :
+ *   · `added` — expériences gardées parce que la copie relue ne les portait pas
+ *     (le signe qu'un autre poste a publié une liste plus courte) ;
+ *   · `aliases` — `{ kept, copy }` : même id, deux noms (le nom gardé est celui de
+ *     l'écran, l'autre est son alias) ;
+ *   · `collapsed` — lignes en double DÉJÀ écrites par une version antérieure du
+ *     programme (même id, autres noms) effondrées en une seule : rien ne s'efface
+ *     en silence, l'effondrement se dit (voir `describeCollapsedExperiments`).
+ */
 export const mergeExperimentsAddOnly = (current, incoming, deletions) => {
-  const list = (Array.isArray(incoming) ? incoming : []).filter(Boolean);
   const records = normalizeDeletions(deletions);
-  const seen = new Set(list.map(experimentKey).filter(Boolean));
+  const mine = (Array.isArray(current) ? current : []).filter(Boolean);
+  const fresh = [];
+  const collapsed = [];
+  (Array.isArray(incoming) ? incoming : []).forEach((t) => {
+    const id = idOf(t);
+    const name = nameOf(t);
+    /* Le nom d'abord (deux entrées sans id sont deux expériences), puis l'id : le
+       survivant garde SA ligne, et un autre nom pour le même id est un alias. */
+    const twin = id
+      ? fresh.find((k) => idOf(k) === id)
+      : fresh.find((k) => !!name && nameOf(k) === name);
+    if (!twin) { fresh.push(t); return; }
+    if ((nameOf(twin) || '') !== (name || '')) collapsed.push({ kept: twin, copy: t });
+  });
+  const seen = new Set();
   const added = [];
-  (Array.isArray(current) ? current : []).filter(Boolean).forEach((t) => {
+  const aliases = [];
+  mine.forEach((t) => {
+    const id = idOf(t);
+    const name = nameOf(t);
     const key = experimentKey(t);
+    /* ❗ RECONNUE PAR L'ID D'ABORD : c'est la clé de la relecture et celle du
+       verrou d'écriture. La garder EN PLUS de la ligne relue posait deux lignes
+       pour un id — le jumeau que la relecture suivante effaçait. */
+    const twin = id
+      ? fresh.find((k) => idOf(k) === id)
+      : (key ? fresh.find((k) => experimentKey(k) === key) : null);
+    if (twin) {
+      /* ❗ MÊME ID, DEUX NOMS : LA LIGNE DE L'ÉCRAN NE BOUGE PAS. C'est elle que
+         l'utilisateur regarde, et c'est la reprise qu'elle porte ; l'autre nom est
+         rendu comme ALIAS pour être DIT. (Adopter la ligne de la copie faisait
+         disparaître la reprise de l'écran — son id étant « déjà là » via l'autre
+         nom, aucun verrou ne bronchait : c'était la fuite ④ du diagnostic.)
+         MÊME NOM, lui, n'est pas un renommage : c'est la MÊME expérience, et la
+         copie relue fait foi (elle est la plus récente par construction) — une
+         valeur fraîche ne se remplace pas par la nôtre. */
+      const renamed = (nameOf(twin) || '') !== (name || '');
+      if (id && renamed) {
+        const at = fresh.indexOf(twin);
+        aliases.push({ kept: t, copy: twin });
+        if (at >= 0) fresh[at] = t;
+      }
+      return;
+    }
     if (!key || seen.has(key)) return;
     if (isExperimentDeleted(t, records)) return;
     seen.add(key);
     added.push(t);
+    fresh.push(t);
   });
-  const tests = withoutDeletedExperiments(list.concat(added), records);
-  return { tests, added };
+  const tests = withoutDeletedExperiments(fresh, records);
+  return { tests, added, aliases, collapsed };
 };
 
 /* ---------------------------------------------------------------------------
@@ -380,6 +532,27 @@ export const describeRemovedExperiments = (count) => (
     : ''
 );
 
+/** Le compte-rendu d'un AJOUT qui a ÉCARTÉ des lignes — « ➕ n'a rien fait » ne
+ *  doit jamais ressembler à une panne : une expérience déjà portée par le
+ *  dataset (même id, même nom) est nommée, et un MÊME ID sous un autre nom est
+ *  dit pour ce qu'il est — la MÊME expérience, renommée (l'objet du Drive garde
+ *  l'id à travers les renommages). Sans cette phrase, la reprise paraissait
+ *  ignorée alors qu'elle était déjà là. */
+export const describeSkippedAdditions = (skipped) => {
+  const list = Array.isArray(skipped) ? skipped.filter((s) => s && s.test) : [];
+  if (!list.length) return '';
+  const renamed = list.filter((s) => s.by === 'id');
+  const same = list.length - renamed.length;
+  const parts = [];
+  if (renamed.length) {
+    parts.push(`${renamed.length} experiment(s) in the file carry an id this dataset ALREADY holds under another name `
+      + `(${renamed.slice(0, 6).map((s) => `« ${nameOf(s.test)} » = « ${nameOf(s.twin)} »`).join(', ')}): `
+      + 'the SAME experiment was renamed, so nothing was added — a load never stacks twins.');
+  }
+  if (same) parts.push(`${same} experiment(s) were already in this dataset under the same name.`);
+  return `${list.length} experiment(s) of this file were LEFT ALONE: ${parts.join(' ')}`;
+};
+
 /* ---------------------------------------------------------------------------
  * 💾 MAGASIN — les deux clés localStorage (App.jsx ne fait que l'entrée/sortie)
  * ------------------------------------------------------------------------ */
@@ -430,12 +603,46 @@ export const adoptExperimentRevivals = (list) =>
  *  — c'est ce qui distingue une suppression d'une perte. Rend la liste à jour
  *  des suppressions. */
 export const recordExperimentDeletions = (before, after, datasetArg, deletedAt = Date.now()) => {
-  const still = new Set(
-    (Array.isArray(after) ? after : []).filter(Boolean).map(experimentKey).filter(Boolean)
-  );
-  const gone = (Array.isArray(before) ? before : []).filter((t) => {
+  const beforeList = (Array.isArray(before) ? before : []).filter(Boolean);
+  const afterList = (Array.isArray(after) ? after : []).filter(Boolean);
+  /* ❗ CE QUI A QUITTÉ L'ÉCRAN, VU PAR IDENTITÉ *ET* PAR LIGNE.
+     L'id seul ne suffit pas : il TRAVERSE les renommages, donc il survit aussi
+     bien à un renommage (rien n'a été supprimé) qu'à la suppression d'UNE des
+     deux lignes d'un même id (une vraie suppression, invisible autrement :
+     « l'id est encore là » via le jumeau, et le verrou d'écriture reprenait
+     l'expérience que l'utilisateur venait de supprimer).
+     La différence est le NOMBRE de lignes de cet id : un renommage le laisse
+     pareil, une suppression le fait baisser. */
+  const afterKeys = new Set();
+  const afterById = new Map();
+  afterList.forEach((t) => {
     const key = experimentKey(t);
-    return !!key && !still.has(key);
+    if (key) afterKeys.add(key);
+    const id = idOf(t);
+    if (!id) return;
+    const entry = afterById.get(id) || { count: 0, names: new Set() };
+    entry.count += 1;
+    const name = nameOf(t);
+    if (name) entry.names.add(name);
+    afterById.set(id, entry);
+  });
+  const beforeById = new Map();
+  beforeList.forEach((t) => {
+    const id = idOf(t);
+    if (id) beforeById.set(id, (beforeById.get(id) || 0) + 1);
+  });
+  const gone = beforeList.filter((t) => {
+    const key = experimentKey(t);
+    if (!key) return false;                     // pas identifiable : jamais « supprimée »
+    const id = idOf(t);
+    if (!id) return !afterKeys.has(key);        // sans id, le nom EST l'identité
+    const entry = afterById.get(id);
+    if (!entry) return true;                    // l'identité a disparu
+    const name = nameOf(t);
+    if (name && entry.names.has(name)) return false;   // cette ligne-ci est toujours là
+    /* L'id survit sous un autre nom : renommage — donc rien à enregistrer — SAUF
+       si une ligne de cet id a bel et bien quitté l'écran. */
+    return entry.count < (beforeById.get(id) || 0);
   });
   /* Rien n'a disparu (le cas de très loin le plus fréquent : une frappe dans une
      page d'expérience) : on ne réécrit même pas la clé. */
@@ -453,9 +660,25 @@ export const recordExperimentDeletions = (before, after, datasetArg, deletedAt =
 export const recordExperimentRevivals = (list, datasetArg, revivedAt = Date.now()) => {
   const datasetId = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
   const items = (Array.isArray(list) ? list : []).filter(Boolean);
+  const targets = items.map((t) => ({ ...t, datasetId: datasetId || datasetOf(t) }));
+  /* ❗ LE GESTE LOCAL L'EMPORTE SUR L'HORLOGE DES POSTES.
+     La levée est écrite par CE poste, MAINTENANT, pour une expérience qu'il vient
+     de ramener : or la suppression qu'elle défait a été datée par un AUTRE poste,
+     dont l'horloge peut avancer (60 s d'avance suffisaient à la faire gagner).
+     Comparer deux horloges de postes décidait donc à la place de l'utilisateur :
+     la suppression tenait, l'enregistrement suivant publiait la copie SANS
+     l'expérience reprise, et le verrou d'écriture la reprenait — elle repartait
+     en silence, exactement le défaut réparé ici.
+     La levée est donc datée APRÈS la suppression que ce poste CONNAÎT (celle
+     qu'elle défait délibérément). Une suppression réellement postérieure — un
+     autre poste a supprimé depuis — reste plus récente, donc elle tient : c'est
+     « supprimer après avoir restauré supprime pour de bon ». */
+  const standing = loadExperimentDeletions().filter((d) => targets.some((t) => sameStamped(d, t)));
+  const latest = standing.reduce((max, d) => Math.max(max, Number(d.deletedAt) || 0), 0);
+  const when = latest >= (Number(revivedAt) || 0) ? latest + 1 : revivedAt;
   let revivals = loadExperimentRevivals();
-  items.forEach((t) => {
-    revivals = addRevival(revivals, { ...t, datasetId: datasetId || datasetOf(t) }, revivedAt);
+  targets.forEach((t) => {
+    revivals = addRevival(revivals, t, when);
   });
   saveExperimentRevivals(revivals);
   return { deletions: loadExperimentDeletions(), revivals };

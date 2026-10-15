@@ -1,0 +1,56 @@
+4855:       if (s.mandatoryBehavior !== undefined) setMandatoryBehavior(s.mandatoryBehavior);
+4856:       // NOTE: authSettings not imported from HTML either — kept as global security config
+4857:       // if (s.authSettings !== undefined) setAuthSettings(...);
+4858:       if (s.solvents !== undefined) setSolvents(s.solvents);
+4859:       if (s.buffers !== undefined) setBuffers(s.buffers);
+4860:       if (s.additives !== undefined) setAdditives(s.additives);
+4861:       if (s.nmrInstruments !== undefined) setNmrInstruments(s.nmrInstruments);
+4862:       if (s.nmrProbes !== undefined) setNmrProbes(s.nmrProbes);
+4863:       if (s.nmrExperiments !== undefined) setNmrExperiments(s.nmrExperiments);
+4864: 
+4865:       if (s.customFields !== undefined) {
+4866:         setCustomFields(normalizeCustomFields(s.customFields));
+4867:       }
+4868: 
+4869:       // NOTE: the Figures & Slides image LIBRARY is not handled here — it is
+4870:       // merged (never replaced) for BOTH modes, together with the papers, see
+4871:       // the `mergeLibraryFromSnapshot` call at the end of this function.
+4872:     } else if (mode === 'append') {
+4873:       /* ➕ L'EXPÉRIENCE REVIENT AVEC SON ID D'ORIGINE — c'est tout l'intérêt du
+4874:          retour chirurgical : un id NEUF (ce que ce mode faisait) laissait le lien
+4875:          du projet (`project.experiments[].testId`) dans le vide et son dossier
+4876:          Drive orphelin, si bien qu'il fallait re-lier à la main ET supprimer les
+4877:          jumeaux. Une expérience que ce dataset porte DÉJÀ (même id ou même nom —
+4878:          la règle d'identité du programme) est simplement ÉCARTÉE : un
+4879:          chargement n'empile jamais un jumeau. Un essai sans id (entrée écrite
+4880:          par une version ancienne) en reçoit un : sans id, rien ne pourrait plus
+4881:          le reconnaître. */
+4882:       const existingKeys = new Set(
+4883:         (Array.isArray(testsRef.current) ? testsRef.current : []).map(testGroupKey).filter(Boolean)
+4884:       );
+4885:       const freshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+4886:       const newTests = [];
+4887:       loadedTests.forEach((p) => {
+4888:         const key = testGroupKey(p);
+4889:         if (key && existingKeys.has(key)) return;      // déjà là : jamais deux fois
+4890:         if (key) existingKeys.add(key);
+4891:         newTests.push(p && p.id ? { ...p } : { ...p, id: freshId() });
+4892:       });
+4893:       /* Le retour est VOLONTAIRE : les suppressions de ces expériences sont
+4894:          LEVÉES (datées), sinon le verrou d'écriture les reprendrait — un autre
+4895:          poste les avait peut-être supprimées, et c'est justement ce qu'on défait
+4896:          ici (voir recordExperimentRevivals, experimentTombstones.js). */
+4897:       if (newTests.length) {
+4898:         try { recordExperimentRevivals(newTests, targetId); } catch { /* magasin indisponible */ }
+4899:         rememberExperiments(targetId, newTests);
+4900:       }
+4901:       /* Ce qui est arrivé SE DIT : combien sont revenues (et avec leur id), et
+4902:          combien ont été laissées de côté parce qu'elles étaient déjà là — un
+4903:          ajout qui « ne fait rien » pour une expérience déjà présente ne doit pas
+4904:          ressembler à une panne. */
+4905:       if (newTests.length < loadedTests.length) {
+4906:         experimentRestoreNote = `${loadedTests.length - newTests.length} experiment(s) of this file were ALREADY in this `
+4907:           + 'dataset (same name or same id): they were left alone — a load never stacks twins. '
+4908:           + `${newTests.length} came back WITH THEIR ORIGINAL ID, so their Project link and their Drive folder are found again.`;
+4909:       } else if (newTests.length) {
+4910:         experimentRestoreNote = `${newTests.length} experiment(s) came back WITH THEIR ORIGINAL ID: their Project link and `

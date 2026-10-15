@@ -43,7 +43,7 @@ import { recordDedupeKey, normalizeKey } from '../administration/importUtils';
 /* L'identité d'un ESSAI (« l'id, sinon le nom ») est celle du verrou des
    expériences : la même règle, importée — jamais recopiée, sinon les deux
    divergeraient (voir utils/experimentTombstones.js). */
-import { experimentKey } from './experimentTombstones';
+import { experimentKey, experimentId } from './experimentTombstones';
 
 /* ── Éléments d’un dataset scientifique (une entrée = une case à cocher) ─── */
 const DEF_LIB = 'Définitions & bibliothèque';
@@ -640,13 +640,21 @@ const groupTests = (tests) => {
  *  donc rien de spécial à savoir) : `key`, `title`, `sub`, `inBase`, `locked`,
  *  `picked`, `noIdentity`, `duplicateOf`. */
 export const experimentRowChoices = (incomingTests, baseTests, merging = false) => {
-  const baseKeys = new Set(
-    (Array.isArray(baseTests) ? baseTests : []).map(testGroupKey).filter(Boolean)
-  );
+  const baseList = (Array.isArray(baseTests) ? baseTests : []).filter(Boolean);
+  /* ❗ « DÉJÀ LÀ » SE DIT PAR ID OU PAR NOM. Le dataset ouvert identifie ses
+     lignes par le NOM (`testGroupKey`) et l'id, lui, TRAVERSE les renommages
+     (`experimentId`, la règle du verrou). Comparer les seuls noms proposait
+     « à ajouter » une expérience dont l'ID était DÉJÀ dans le dataset sous son
+     nom d'avant : l'ajout empilait alors une SECONDE ligne pour le même id, et
+     la relecture suivante — ID-keyée, elle — effaçait l'une des deux sans un
+     mot. C'est la même identité que partout ailleurs, vue des deux côtés. */
+  const baseKeys = new Set(baseList.map(testGroupKey).filter(Boolean));
+  const baseIds = new Set(baseList.map(experimentId).filter(Boolean));
   const groups = groupTests(incomingTests);
   const firstSeen = new Map();
   return groups.map((g, index) => {
-    const inBase = !!g.key && baseKeys.has(g.key);
+    const inBase = (!!g.key && baseKeys.has(g.key))
+      || g.items.some((t) => { const id = experimentId(t); return !!id && baseIds.has(id); });
     const duplicateOf = g.key && firstSeen.has(g.key) ? firstSeen.get(g.key) : -1;
     if (g.key && !firstSeen.has(g.key)) firstSeen.set(g.key, index);
     return {

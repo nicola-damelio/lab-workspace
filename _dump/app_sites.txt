@@ -1,0 +1,26 @@
+﻿
+LineNumber Line                                                           
+---------- ----                                                           
+       153   mergeExperimentsAddOnly, protectUnrecordedDrops,             
+      1994        1. LA MÉMOIRE DU POSTE — `knownExperimentsRef` retient, 
+           dataset par                                                    
+      2006   const knownExperimentsRef = useRef(new Map());               
+      2009   const rememberExperiments = (datasetId, list) => {           
+      2012     let map = knownExperimentsRef.current.get(id);             
+      2013     if (!map) { map = new Map();                               
+           knownExperimentsRef.current.set(id, map); }                    
+      2031     const map = knownExperimentsRef.current.get(id);           
+      2047     knownExperimentsRef.current.set(id, map);                  
+      4617     let experimentRestoreNote = '';                            
+      4906         experimentRestoreNote = `${loadedTests.length -        
+           newTests.length} experiment(s) of this file were ALREADY in    
+           this `                                                         
+      4910         experimentRestoreNote = `${newTests.length}            
+           experiment(s) came back WITH THEIR ORIGINAL ID: their Project  
+           link and `                                                     
+      5558       /* ⛔ UNE RELECTURE N'EFFACE PLUS —                       
+           `mergeExperimentsAddOnly` : ce que la                          
+      5564       const merged = mergeExperimentsAddOnly(                  
+      5576           message: describeKeptExperiments(merged.added)       
+
+

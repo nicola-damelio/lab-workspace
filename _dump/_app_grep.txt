@@ -1,0 +1,44 @@
+﻿152: experimentKey, loadExperimentDeletions, loadExperimentRevivals,
+153: mergeExperimentsAddOnly, protectUnrecordedDrops,
+154: protectDistantDrops, describeDistantRescue,
+155: recordExperimentDeletions, recordExperimentRevivals,
+156: describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments
+171: experimentRowChoices, pickExperimentRows, testGroupKey, TESTS_SECTION_ID,
+801: const lastExperimentKey = (datasetId) => `labLastExperiment_${datasetId || 'global'}`;
+805: const raw = JSON.parse(sessionStorage.getItem(lastExperimentKey(datasetId)) || 'null');
+813: sessionStorage.setItem(lastExperimentKey(datasetId), JSON.stringify(payload));
+1969: recordExperimentDeletions(prev, next, currentDatasetIdRef.current);
+2001: connaît est GARDÉ — et DIT (`describeKeptExperiments`) ;
+2002: 3. L'ENREGISTREMENT passe par `guardExperimentsForWrite` : rien ne part
+2009: const rememberExperiments = (datasetId, list) => {
+2015: const key = experimentKey(t);
+2022: *  à distance pendant quelques secondes (voir `guardDistantExperiments`) — car
+2044: const key = experimentKey(t);
+2082: const guardExperimentsForWrite = (list) => {
+2085: const out = protectUnrecordedDrops(knownExperimentsOf(datasetId), list, deletions);
+2089: describeRemovedExperiments(out.removed)
+2102: rememberExperiments(datasetId, out.tests);
+2107: `guardExperimentsForWrite` protège ce que CE poste connaît. Reste le cas du
+2117: `protectDistantDrops` : la 🗑 faite ailleurs reste une 🗑).
+2156: const guardDistantExperiments = async (list, { datasetId = null, applyToScreen = true } = {}) => {
+2164: const out = protectDistantDrops(distant, list, deletions);
+2173: rememberExperiments(targetId, out.tests);
+2179: rememberExperiments(currentDatasetId, tests);
+4100: /* ⛔ LE VERROU DES EXPÉRIENCES (voir guardExperimentsForWrite) : la liste
+4105: rawData.tests = guardExperimentsForWrite(rawData.tests);
+4106: /* …PUIS LA COPIE PARTAGÉE (voir guardDistantExperiments) : ce qu'un autre
+4109: rawData.tests = await guardDistantExperiments(rawData.tests);
+4883: (Array.isArray(testsRef.current) ? testsRef.current : []).map(testGroupKey).filter(Boolean)
+4888: const key = testGroupKey(p);
+4896: ici (voir recordExperimentRevivals, experimentTombstones.js). */
+4898: try { recordExperimentRevivals(newTests, targetId); } catch { /* magasin indisponible */ }
+4899: rememberExperiments(targetId, newTests);
+5298: `guardDistantExperiments`) : l'utilisateur est déjà ailleurs ;
+5321: guardExperimentsForWrite) : quitter un dataset ne peut pas perdre une
+5324: if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);
+5331: /* …et la copie PARTAGÉE (voir guardDistantExperiments) : quitter une base
+5335: if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests, { datasetId, applyToScreen: false });
+5558: /* ⛔ UNE RELECTURE N'EFFACE PLUS — `mergeExperimentsAddOnly` : ce que la
+5564: const merged = mergeExperimentsAddOnly(
+5576: message: describeKeptExperiments(merged.added)
+5579: rememberExperiments(dset.id, loadedTests);

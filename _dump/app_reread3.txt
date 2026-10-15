@@ -1,0 +1,71 @@
+5545:   setAdminContent(null);
+5546:   setActiveDatasetKind('scientific');
+5547:   setCurrentAdminPage('overview');
+5548:   setAdminFocus(null);
+5549:   resetAdminNavHistory();
+5550: 
+5551:   try {
+5552:     const migrated = migrateLoadedDataset(s);
+5553:       /* Ce que la copie relue PORTE de suppressions (et de restaurations) est
+5554:          adopté AVANT de fusionner : une expérience supprimée sur un autre poste
+5555:          doit être écartée ici aussi — c'est le record qui voyage avec le payload
+5556:          (voir utils/experimentTombstones.js). */
+5557:       adoptDatasetExperimentRecords(dset);
+5558:       /* ⛔ UNE RELECTURE N'EFFACE PLUS — `mergeExperimentsAddOnly` : ce que la
+5559:          copie porte est adopté (elle est la plus récente par construction), ce
+5560:          qu'elle NE PORTE PAS et que CE poste connaît est GARDÉ. Sans cela, une
+5561:          copie plus ancienne (repli sur le Drive, autre poste en retard) vidait
+5562:          la mémoire du poste — et l'enregistrement automatique publiait ce vide :
+5563:          c'est exactement le scénario du rapport. */
+5564:       const merged = mergeExperimentsAddOnly(
+5565:         knownExperimentsOf(dset.id),
+5566:         migrated.tests,
+5567:         experimentRecordsOf(dset.id).deletions
+5568:       );
+5569:       const loadedTests = merged.tests;
+5570:       /* Ce qui a été GARDÉ se dit : c'est le signe qu'un autre poste publie une
+5571:          liste plus courte, et l'écran est le seul endroit où cela se voit. */
+5572:       if (merged.added.length && keepPlace) {
+5573:         setDialog((prev) => prev || {
+5574:           type: 'alert',
+5575:           title: '⚠ Experiments kept (the shared copy had fewer)',
+5576:           message: describeKeptExperiments(merged.added)
+5577:         });
+5578:       }
+5579:       rememberExperiments(dset.id, loadedTests);
+5580: 
+5581:       if (loadedTests.length > 0) {
+5582:         setReactTests(loadedTests);
+5583:         historyRef.current = [loadedTests];
+5584:         setHistoryIndex(0);
+5585:         /* Une RELECTURE de la page ouverte (🔄 Refresh) garde l'expérience qu'on
+5586:            regarde : sinon, rafraîchir la 3ᵉ condition d'un essai ramènerait sur
+5587:            la première — l'inverse de la promesse du bouton. On ne retombe sur
+5588:            la première que si elle n'existe plus dans la copie relue. */
+5589:         setActiveTestId((prev) =>
+5590:           keepPlace && loadedTests.some((t) => t && t.id === prev) ? prev : loadedTests[0].id
+5591:         );
+5592:       } else {
+5593:         const fresh = [createEmptyTest('t1', 1)];
+5594:         setReactTests(fresh);
+5595:         historyRef.current = [fresh];
+5596:         setHistoryIndex(0);
+5597:         setActiveTestId('t1');
+5598:       }
+5599: 
+5600:       /* Le titre retenu EST celui du contexte Drive : un seul calcul, deux usages
+5601:          (l'affichage et l'ancrage du dossier — voir anchorDriveContext). */
+5602:       const openedTitle = dset.title && String(dset.title).trim()
+5603:         ? dset.title
+5604:         : s.datasetTitle !== undefined
+5605:         ? s.datasetTitle
+5606:         : s.reportTitle !== undefined
+5607:         ? s.reportTitle
+5608:         : 'Untitled';
+5609:       setDatasetTitle(openedTitle);
+5610: 
+5611:       setDatasetSubtitle(
+5612:         s.datasetSubtitle !== undefined ? s.datasetSubtitle : s.reportSubtitle || ''
+5613:       );
+5614: 
+5615:       setCustomCmpds(s.customCmpds || []);

@@ -1,0 +1,33 @@
+﻿153: mergeExperimentsAddOnly, protectUnrecordedDrops,
+155: recordExperimentDeletions, recordExperimentRevivals,
+156: describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments
+171: experimentRowChoices, pickExperimentRows, testGroupKey, TESTS_SECTION_ID,
+1659: experimentRowChoices). Les autres pages gardent leur case unique.
+1665: const testRows = experimentRowChoices(pendingLoad.tests, pendingLoad.baseTests, false);
+1700: (`experimentRowChoices`, une par expérience). Sans cette généralité, les
+1941: setReactTests((prev) => {
+1969: recordExperimentDeletions(prev, next, currentDatasetIdRef.current);
+2001: connaît est GARDÉ — et DIT (`describeKeptExperiments`) ;
+2101: setReactTests(out.tests);
+2172: if (applyToScreen) setReactTests(out.tests);
+2284: setReactTests(target);
+2294: setReactTests(target);
+4547: comprises (voir experimentRowChoices dans utils/loadSelection.js). Le
+4554: const sciRows = experimentRowChoices(loadedTests, testsRef.current, false);
+4583: experimentRowChoices. */
+4591: /* 🔎 LE CHOIX RIGA PER RIGA (voir experimentRowChoices) : la page
+4602: const loadedTests = testRowPicks ? pickExperimentRows(allLoadedTests, testRowPicks) : allLoadedTests;
+4617: let experimentRestoreNote = '';
+4787: setReactTests(loadedTests);
+4896: ici (voir recordExperimentRevivals, experimentTombstones.js). */
+4898: try { recordExperimentRevivals(newTests, targetId); } catch { /* magasin indisponible */ }
+4906: experimentRestoreNote = `${loadedTests.length - newTests.length} experiment(s) of this file were ALREADY in this `
+4910: experimentRestoreNote = `${newTests.length} experiment(s) came back WITH THEIR ORIGINAL ID: their Project link and `
+5085: } else if (experimentRestoreNote) {
+5089: setDialog({ type: 'alert', title: 'Experiments restored', message: experimentRestoreNote });
+5132: setReactTests(freshTests);
+5558: /* ⛔ UNE RELECTURE N'EFFACE PLUS — `mergeExperimentsAddOnly` : ce que la
+5564: const merged = mergeExperimentsAddOnly(
+5576: message: describeKeptExperiments(merged.added)
+5582: setReactTests(loadedTests);
+5594: setReactTests(fresh);

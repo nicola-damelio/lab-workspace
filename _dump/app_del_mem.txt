@@ -1,0 +1,121 @@
+1950:         if (!deepSame(next, prev)) {
+1951:           const currentHistory = historyRef.current.slice(0, historyIndex + 1);
+1952:           currentHistory.push(next);
+1953: 
+1954:           if (currentHistory.length > 50) currentHistory.shift();
+1955: 
+1956:           historyRef.current = currentHistory;
+1957:           setHistoryIndex(currentHistory.length - 1);
+1958:         }
+1959: 
+1960:         /* 🗑 CE QUI DISPARAÎT PAR UN GESTE LAISSE SA SUPPRESSION ENREGISTRÉE
+1961:            (voir utils/experimentTombstones.js). C'est ce qui distingue une
+1962:            suppression d'une PERTE : sans ce record, le verrou d'écriture
+1963:            reprendrait l'expérience que l'utilisateur vient de supprimer ; avec
+1964:            lui, il ne reprend que ce qui a disparu sans un mot.
+1965: 
+1966:            Le geste passe TOUJOURS par ce point unique (🗑 d'Experiments, 🗑
+1967:            d'une condition, undo/redo, déplacement…) ; les RELECTURES d'une
+1968:            copie, elles, passent par `setReactTests` et ne notent rien. */
+1969:         recordExperimentDeletions(prev, next, currentDatasetIdRef.current);
+1970: 
+1971:         return next;
+1972:       });
+1973:     },
+1974:     [historyIndex]
+1975:   );
+1976: 
+1977:   /* ⛔ « L'EXPÉRIENCE A DISPARU DU DATASET » — la réparation de la CAUSE.
+1978: 
+1979:      Le rapport, mot pour mot : « le esperienze spariscono dal dataset
+1980:      all'enregistrement automatico — sul Drive ci sono ancora le cartelle e i
+1981:      .json, ma nel programma non ci sono più », et rien ne le disait.
+1982: 
+1983:      La cause : la liste des expériences vit ENTIÈRE dans le payload du dataset
+1984:      et chaque enregistrement (automatique : 1,5 s après la dernière frappe,
+1985:      vidé à la fermeture d'onglet — voir l'effet plus bas) écrit cette liste
+1986:      d'un bloc. Un poste qui a lu une copie plus ANCIENNE (Firestore
+1987:      injoignable → repli sur la copie du Drive) publie donc une liste PLUS
+1988:      COURTE, en silence.
+1989: 
+1990:      Trois pièces, les mêmes que pour les projets (utils/projectTombstones.js) ;
+1991:      les règles sont dans utils/experimentTombstones.js et vérifiées par
+1992:      _experiment_vanishing_test.mjs :
+1993: 
+1994:        1. LA MÉMOIRE DU POSTE — `knownExperimentsRef` retient, dataset par
+1995:           dataset, les expériences que ce poste a vues (ou écrites). Elle ne se
+1996:           vide jamais toute seule : seules les suppressions enregistrées (🗑,
+1997:           écrites par le geste, magasin en fin de module) l'écartent. C'est elle
+1998:           qui permet de refuser un enregistrement qui perdrait une expérience ;
+1999:        2. LA RELECTURE (openDataset, 🔄 Refresh) est en AJOUT SEUL : ce que la
+2000:           copie apporte est adopté, ce qu'elle NE PORTE PAS et que ce poste
+2001:           connaît est GARDÉ — et DIT (`describeKeptExperiments`) ;
+2002:        3. L'ENREGISTREMENT passe par `guardExperimentsForWrite` : rien ne part
+2003:           sans que ce qui manque ait un record de suppression. Ce qui a été
+2004:           repris est DIT à l'écran — un sauvetage muet laisserait croire que
+2005:           tout va bien alors qu'un poste publie une liste tronquée. */
+2006:   const knownExperimentsRef = useRef(new Map());
+2007: 
+2008:   /** Retenir (union, sans jamais effacer) ce que ce poste voit de ce dataset. */
+2009:   const rememberExperiments = (datasetId, list) => {
+2010:     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+2011:     if (!id) return;
+2012:     let map = knownExperimentsRef.current.get(id);
+2013:     if (!map) { map = new Map(); knownExperimentsRef.current.set(id, map); }
+2014:     (Array.isArray(list) ? list : []).forEach((t) => {
+2015:       const key = experimentKey(t);
+2016:       if (key) map.set(key, t);
+2017:     });
+2018:   };
+2019: 
+2020:   /** LE GESTE QUI A LE DROIT D'ÉCARTER SANS RECORD (♻️ Replace, undo/redo) : il
+2021:    *  ne se contente pas de vider la mémoire du poste, il DÉSARME aussi le verrou
+2022:    *  à distance pendant quelques secondes (voir `guardDistantExperiments`) — car
+2023:    *  à cet instant la copie partagée porte encore, mot pour mot, ce que
+2024:    *  l'utilisateur vient d'écarter. */
+2025:   const voluntaryForgetRef = useRef({ datasetId: '', at: 0 });
+2026:   const DISTANT_GUARD_SILENCE_MS = 10000;
+2027: 
+2028:   /** Ce que ce poste connaît de ce dataset (la liste des expériences « vues »). */
+2029:   const knownExperimentsOf = (datasetId) => {
+2030:     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+2031:     const map = knownExperimentsRef.current.get(id);
+2032:     return map ? Array.from(map.values()) : [];
+2033:   };
+2034: 
+2035:   /** UN REMPLACEMENT VOLONTAIRE (« ♻️ Replace ») est le seul geste qui a le
+2036:    *  droit de vider la mémoire de ce dataset : il est visible à l'écran et
+2037:    *  l'utilisateur l'a demandé. La mémoire suit ce que l'écran montre — elle ne
+2038:    *  ressuscite pas ce qu'on vient de remplacer. */
+2039:   const forgetExperiments = (datasetId, list) => {
+2040:     const id = datasetId === undefined || datasetId === null ? '' : String(datasetId);
+2041:     if (!id) return;
+2042:     const map = new Map();
+2043:     (Array.isArray(list) ? list : []).forEach((t) => {
+2044:       const key = experimentKey(t);
+2045:       if (key) map.set(key, t);
+2046:     });
+2047:     knownExperimentsRef.current.set(id, map);
+2048:     /* ♻️ Ce geste ÉCARTE volontairement : le verrou à distance se taît pour ce
+2049:        dataset pendant quelques secondes, sinon il reprendrait tout de suite, de
+2050:        la copie partagée, ce que l'utilisateur vient de remplacer (même règle que
+2051:        la mémoire du poste ci-dessus). */
+2052:     voluntaryForgetRef.current = { datasetId: id, at: Date.now() };
+2053:   };
+2054: 
+2055:   /** LES RECORDS DE CE DATASET : suppressions enregistrées MOINS les levées (une
+2056:    *  expérience restaurée doit pouvoir revenir), chacun rattaché au dataset
+2057:    *  quand il ne le portait pas. */
+2058:   const experimentRecordsOf = (datasetId) => {
+2059:     const deletions = deletionsForDataset(loadExperimentDeletions(), datasetId);
+2060:     const revivals = revivalsForDataset(loadExperimentRevivals(), datasetId);
+2061:     return { deletions: withoutRevivedExperiments(deletions, revivals), revivals };
+2062:   };
+2063: 
+2064:   /** ADOPTER les records portés par une copie (payload du dataset, fichier
+2065:    *  HTML) : une suppression faite sur un autre poste vaut ici aussi — sinon ce
+2066:    *  poste republierait l'expérience que l'autre vient de supprimer. */
+2067:   const adoptDatasetExperimentRecords = (payload) => {
+2068:     if (!payload || typeof payload !== 'object') return;
+2069:     try {
+2070:       if (Array.isArray(payload.deletedExperiments) && payload.deletedExperiments.length) {

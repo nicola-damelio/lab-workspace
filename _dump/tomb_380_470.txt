@@ -1,0 +1,91 @@
+380:   const ids = new Set(screen.map(idOf).filter(Boolean));
+381:   const names = new Set(screen.map(nameOf).filter(Boolean));
+382:   const newId = typeof makeId === 'function' ? makeId : defaultFreshId;
+383:   const tests = [];
+384:   const skipped = [];
+385:   (Array.isArray(incoming) ? incoming : []).forEach((raw) => {
+386:     const row = raw && typeof raw === 'object' ? raw : { name: String(raw === undefined || raw === null ? '' : raw) };
+387:     const id = idOf(row);
+388:     const name = nameOf(row);
+389:     const twin = id && ids.has(id)
+390:       ? screen.find((t) => idOf(t) === id)
+391:       : (name && names.has(name) ? screen.find((t) => nameOf(t) === name) : null);
+392:     if (twin) { skipped.push({ test: row, twin, by: id && idOf(twin) === id ? 'id' : 'name' }); return; }
+393:     if (id) ids.add(id);
+394:     if (name) names.add(name);
+395:     tests.push(id ? { ...row } : { ...row, id: newId() });
+396:   });
+397:   return { tests, skipped };
+398: };
+399: 
+400: /** UNE LECTURE N'EFFACE PLUS : la copie relue (`incoming`) est adoptée telle
+401:  *  quelle, et ce que ce poste connaît (`current`) et qu'elle ne porte pas est
+402:  *  AJOUTÉ à la fin. Les suppressions enregistrées s'appliquent aux deux.
+403:  *
+404:  *  ❗ UN ID, UNE LIGNE — ET L'AUTRE NOM SE DIT. L'id est l'identité qui TRAVERSE
+405:  *  les renommages : la copie relue peut donc porter NOTRE id sous un AUTRE nom (un
+406:  *  poste a renommé l'expérience, ou la reprise du Drive l'a ramenée sous son nom
+407:  *  d'aujourd'hui). Deux lignes pour un même id était le jumeau que la relecture
+408:  *  SUIVANTE, elle, efface par id — la ligne reprise repartait alors sans un mot.
+409:  *  Ici la ligne DE L'ÉCRAN reste (« l'ancien nom ne bouge pas » : l'utilisateur ne
+410:  *  voit rien changer sous ses yeux) et l'autre nom est rendu dans `aliases` pour
+411:  *  être DIT — jamais recopié en silence.
+412:  *
+413:  *  Rend `{ tests, added, aliases, collapsed }` :
+414:  *   · `added` — expériences gardées parce que la copie relue ne les portait pas
+415:  *     (le signe qu'un autre poste a publié une liste plus courte) ;
+416:  *   · `aliases` — `{ kept, copy }` : même id, deux noms (le nom gardé est celui de
+417:  *     l'écran, l'autre est son alias) ;
+418:  *   · `collapsed` — lignes en double DÉJÀ écrites par une version antérieure du
+419:  *     programme (même id, autres noms) effondrées en une seule : rien ne s'efface
+420:  *     en silence, l'effondrement se dit (voir `describeCollapsedExperiments`).
+421:  */
+422: export const mergeExperimentsAddOnly = (current, incoming, deletions) => {
+423:   const records = normalizeDeletions(deletions);
+424:   const mine = (Array.isArray(current) ? current : []).filter(Boolean);
+425:   const fresh = [];
+426:   const collapsed = [];
+427:   (Array.isArray(incoming) ? incoming : []).forEach((t) => {
+428:     const id = idOf(t);
+429:     const name = nameOf(t);
+430:     /* Le nom d'abord (deux entrées sans id sont deux expériences), puis l'id : le
+431:        survivant garde SA ligne, et un autre nom pour le même id est un alias. */
+432:     const twin = id
+433:       ? fresh.find((k) => idOf(k) === id)
+434:       : fresh.find((k) => !!name && nameOf(k) === name);
+435:     if (!twin) { fresh.push(t); return; }
+436:     if ((nameOf(twin) || '') !== (name || '')) collapsed.push({ kept: twin, copy: t });
+437:   });
+438:   const seen = new Set();
+439:   const added = [];
+440:   const aliases = [];
+441:   mine.forEach((t) => {
+442:     const id = idOf(t);
+443:     const name = nameOf(t);
+444:     const key = experimentKey(t);
+445:     /* ❗ RECONNUE PAR L'ID D'ABORD : c'est la clé de la relecture et celle du
+446:        verrou d'écriture. La garder EN PLUS de la ligne relue posait deux lignes
+447:        pour un id — le jumeau que la relecture suivante effaçait. */
+448:     const twin = id
+449:       ? fresh.find((k) => idOf(k) === id)
+450:       : (key ? fresh.find((k) => experimentKey(k) === key) : null);
+451:     if (twin) {
+452:       /* ❗ MÊME ID, DEUX NOMS : LA LIGNE DE L'ÉCRAN NE BOUGE PAS. C'est elle que
+453:          l'utilisateur regarde, et c'est la reprise qu'elle porte ; l'autre nom est
+454:          rendu comme ALIAS pour être DIT. (Adopter la ligne de la copie faisait
+455:          disparaître la reprise de l'écran — son id étant « déjà là » via l'autre
+456:          nom, aucun verrou ne bronchait : c'était la fuite ④ du diagnostic.)
+457:          MÊME NOM, lui, n'est pas un renommage : c'est la MÊME expérience, et la
+458:          copie relue fait foi (elle est la plus récente par construction) — une
+459:          valeur fraîche ne se remplace pas par la nôtre. */
+460:       const renamed = (nameOf(twin) || '') !== (name || '');
+461:       if (id && renamed) {
+462:         const at = fresh.indexOf(twin);
+463:         aliases.push({ kept: t, copy: twin });
+464:         if (at >= 0) fresh[at] = t;
+465:       }
+466:       return;
+467:     }
+468:     if (!key || seen.has(key)) return;
+469:     if (isExperimentDeleted(t, records)) return;
+470:     seen.add(key);

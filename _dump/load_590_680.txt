@@ -1,0 +1,91 @@
+590: const testTitleOf = (t, index) => String((t && (t.name || t.instanceName)) || '').trim() || `Test ${index + 1}`;
+591: 
+592: /** LE REGROUPEMENT D'UNE EXPÉRIENCE : par NOM d'abord — c'est la règle des pages
+593:  *  du dataset (`experimentsGrouped`) et celle du geste 🗑, qui supprime TOUTES
+594:  *  les conditions d'un même essai. Deux conditions d'une même expérience portent
+595:  *  donc UNE ligne, alors qu'elles ont deux id : grouper par id couperait
+596:  *  l'expérience en morceaux, et la restaurer à moitié. Le nom fait défaut (entrée
+597:  *  écrite par une version ancienne) → l'identité du verrou (l'id), et faute de
+598:  *  tout, la position (voir `#row:` ci-dessous). */
+599: export const testGroupKey = (t) => {
+600:   const name = String((t && (t.name || t.instanceName)) || '').trim();
+601:   return name ? `name:${name}` : experimentKey(t);
+602: };
+603: 
+604: /** Ce que la fenêtre affiche sous le titre d'une ligne : les conditions de
+605:  *  l'essai, ses projets, son auteur et sa date — ce qui permet de RECONNAÎTRE
+606:  *  l'expérience qu'on vient restaurer. */
+607: const testSubOf = (items) => {
+608:   const list = Array.isArray(items) ? items : [];
+609:   const first = list[0] || {};
+610:   const projects = [...new Set(list.flatMap((t) => (Array.isArray(t && t.projectNames) ? t.projectNames : [])))]
+611:     .map((s) => String(s || '').trim())
+612:     .filter(Boolean);
+613:   return [
+614:     list.length > 1 ? `${list.length} conditions` : '',
+615:     projects.length ? projects.join(' / ') : 'no project',
+616:     String(first.operator || '').trim(),
+617:     String(first.date || '').trim()
+618:   ].filter(Boolean).join(' · ');
+619: };
+620: 
+621: /** Grouper une liste d'essais par IDENTITÉ (id sinon nom) : une expérience =
+622:  *  un essai AVEC ses conditions, comme partout ailleurs dans le programme. Une
+623:  *  entrée sans identité (ni id ni nom) fait une ligne à elle : elle est
+624:  *  reconnaissable à sa POSITION, pas à son contenu. */
+625: const groupTests = (tests) => {
+626:   const groups = [];
+627:   const byKey = new Map();
+628:   (Array.isArray(tests) ? tests : []).filter(Boolean).forEach((t) => {
+629:     const key = testGroupKey(t);
+630:     if (!key) { groups.push({ key: '', items: [t] }); return; }
+631:     let g = byKey.get(key);
+632:     if (!g) { g = { key, items: [] }; byKey.set(key, g); groups.push(g); }
+633:     g.items.push(t);
+634:   });
+635:   return groups;
+636: };
+637: 
+638: /** Les lignes de la page « Expériences / Tests » d'un FICHIER : une par essai,
+639:  *  dans l'ordre du fichier. Même forme que `rowChoicesOf` (l'écran d'import n'a
+640:  *  donc rien de spécial à savoir) : `key`, `title`, `sub`, `inBase`, `locked`,
+641:  *  `picked`, `noIdentity`, `duplicateOf`. */
+642: export const experimentRowChoices = (incomingTests, baseTests, merging = false) => {
+643:   const baseKeys = new Set(
+644:     (Array.isArray(baseTests) ? baseTests : []).map(testGroupKey).filter(Boolean)
+645:   );
+646:   const groups = groupTests(incomingTests);
+647:   const firstSeen = new Map();
+648:   return groups.map((g, index) => {
+649:     const inBase = !!g.key && baseKeys.has(g.key);
+650:     const duplicateOf = g.key && firstSeen.has(g.key) ? firstSeen.get(g.key) : -1;
+651:     if (g.key && !firstSeen.has(g.key)) firstSeen.set(g.key, index);
+652:     return {
+653:       key: g.key || `#row:${index}`,
+654:       index,
+655:       title: testTitleOf(g.items[0], index),
+656:       sub: testSubOf(g.items),
+657:       identity: g.key,
+658:       inBase,
+659:       duplicateOf,
+660:       noIdentity: !g.key,
+661:       locked: !!merging && inBase,
+662:       picked: merging ? !inBase : true
+663:     };
+664:   });
+665: };
+666: 
+667: /** APPLICATION du choix ligne à ligne : ne garde que les essais dont la ligne
+668:  *  est cochée. Les essais d'une ligne cochée partent ENTIERS (toutes leurs
+669:  *  conditions) et avec leur ID D'ORIGINE — c'est ce qui fait revenir le lien du
+670:  *  projet et le dossier du Drive au lieu d'en créer un jumeau anonyme. */
+671: export const pickExperimentRows = (tests, picks) => {
+672:   const list = (Array.isArray(tests) ? tests : []).filter(Boolean);
+673:   if (!Array.isArray(picks)) return list;
+674:   const keep = new Set(picks);
+675:   const kept = new Set();
+676:   groupTests(list).forEach((g, index) => {
+677:     const key = g.key || `#row:${index}`;
+678:     if (keep.has(key)) g.items.forEach((t) => kept.add(t));
+679:   });
+680:   return list.filter((t) => kept.has(t));

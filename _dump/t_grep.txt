@@ -1,0 +1,45 @@
+﻿16: 1. la LECTURE n'efface plus (`mergeExperimentsAddOnly`) ;
+17: 2. l'ÉCRITURE ne perd rien sans record (`protectUnrecordedDrops`, le verrou) ;
+19: lève (`withoutRevivedExperiments`) — sans quoi un autre poste, qui
+70: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], []).tests), ['t1', 't2', 't3'],
+72: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], []).rescued), ['t3'],
+74: eq(ids(T.protectUnrecordedDrops([A, B, C], [], []).tests), ['t1', 't2', 't3'],
+76: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+78: eq(T.protectUnrecordedDrops([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).removed, 1,
+80: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+82: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], [{ id: 't3', datasetId: 'ds2', deletedAt: 5 }]).rescued), ['t3'],
+84: eq(ids(T.protectUnrecordedDrops([A, B, C], [A, B], ['t3']).tests), ['t1', 't2'],
+95: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B], []).tests), ['t1', 't2', 't3'],
+97: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B], []).added), ['t3'],
+99: eq(ids(T.mergeExperimentsAddOnly([A], [A, B], []).tests), ['t1', 't2'],
+101: eq(ids(T.mergeExperimentsAddOnly([A], [A, B], []).added), [], '…sans bruit');
+102: eq(ids(T.mergeExperimentsAddOnly([A, B, C], [A, B, C], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+104: eq(ids(T.mergeExperimentsAddOnly([C], [A, B], [{ id: 't3', datasetId: DS, deletedAt: 5 }]).tests), ['t1', 't2'],
+106: eq(T.mergeExperimentsAddOnly([A], [A], []).tests[0], A,
+110: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: DS, deletedAt: 5 }], []).length, 1,
+112: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: DS, deletedAt: 5 }], [{ id: 't3', datasetId: DS, revivedAt: 6 }]).length, 0,
+114: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: DS, deletedAt: 6 }], [{ id: 't3', datasetId: DS, revivedAt: 5 }]).length, 1,
+116: eq(T.withoutRevivedExperiments([{ id: 't3', datasetId: 'ds2', deletedAt: 5 }], [{ id: 't3', datasetId: DS, revivedAt: 9 }]).length, 1,
+118: eq(T.withoutRevivedExperiments([{ name: 'Cicadas', deletedAt: 5 }], [{ name: 'Cicadas', datasetId: DS, revivedAt: 6 }]).length, 0,
+131: T.recordExperimentDeletions([A, B, C], [A, B], DS, 1000);
+134: T.recordExperimentRevivals([C], DS, 2000);
+135: eq(T.withoutRevivedExperiments(T.loadExperimentDeletions(), T.loadExperimentRevivals()).length, 0,
+137: T.recordExperimentDeletions([A, B, C], [A, B], DS, 3000);
+138: eq(T.withoutRevivedExperiments(T.loadExperimentDeletions(), T.loadExperimentRevivals()).length, 1,
+157: has(APP, 'recordExperimentDeletions(prev, next, currentDatasetIdRef.current);',
+159: has(APP, 'const merged = mergeExperimentsAddOnly(',
+165: has(APP, 'protectUnrecordedDrops(knownExperimentsOf(datasetId), list, deletions)',
+177: has(APP, 'recordExperimentRevivals(newTests, targetId);',
+183: has(APP, 'const sciRows = experimentRowChoices(loadedTests, testsRef.current, false);',
+185: has(APP, 'const testRows = experimentRowChoices(pendingLoad.tests, pendingLoad.baseTests, false);',
+189: lacks(APP, 'experimentRowChoices(pendingLoad.tests, testsRef.current',
+197: has(LOAD, 'export const experimentRowChoices = (incomingTests, baseTests, merging = false) => {',
+201: has(LOAD, 'export const testGroupKey = (t) => {',
+211: const rows = L.experimentRowChoices([C1, C2, C3], [C3], false);
+224: eq(L.experimentRowChoices([{ name: 'Senza id', condition: 1 }], [{ name: 'Senza id' }], false)[0].inBase, true,
+226: const rowsMerge = L.experimentRowChoices([C3], [C3], true);
+229: const anon = L.experimentRowChoices([{ note: 'x' }], [], false);
+233: eq(L.testGroupKey({ name: 'Aphids', id: 't9' }), 'name:Aphids',
+266: const missing = L.experimentRowChoices([C1, C2, C3], [C3], false).find((r) => !r.inBase);
+272: eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)
+275: eq(L.pickExperimentRows([C1, C2, C3], L.experimentRowChoices([C1, C2, C3], [C3], false)

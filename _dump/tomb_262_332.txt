@@ -1,0 +1,71 @@
+262:      lignes pour un id publie le jumeau que la relecture suivante effacera — une
+263:      des deux lignes, en silence. L'effondrement se DIT (voir
+264:      `describeCollapsedExperiments`) : ce n'est pas une perte, c'est une ligne de
+265:      trop pour une même expérience. */
+266:   const { tests: list, collapsed } = collapseExperimentTwins(outgoing);
+267:   const records = normalizeDeletions(deletions);
+268:   const rescued = unrecordedDrops(known, list, records);
+269:   let out = list;
+270:   if (rescued.length) {
+271:     const seen = new Set(list.map(experimentKey).filter(Boolean));
+272:     out = list.slice();
+273:     rescued.forEach((t) => {
+274:       const key = experimentKey(t);
+275:       if (key && seen.has(key)) return;
+276:       if (key) seen.add(key);
+277:       out.push(t);
+278:     });
+279:   }
+280:   const tests = withoutDeletedExperiments(out, records);
+281:   return { tests, rescued, removed: out.length - tests.length, collapsed };
+282: };
+283: 
+284: /** ⛔ LE MÊME VERROU, VU DE L'AUTRE CÔTÉ DU FIL — « la copie PARTAGÉE qu'on
+285:  *  s'apprête à écraser ».
+286:  *
+287:  *  `protectUnrecordedDrops` protège ce que CE poste connaît. Reste le cas du
+288:  *  rapport : une expérience créée sur un AUTRE poste pendant que celui-ci
+289:  *  gardait une copie plus ancienne. Ce poste-ci ne l'a jamais vue, donc sa
+290:  *  mémoire ne peut pas la reprendre… alors que l'enregistrement l'effacerait
+291:  *  quand même du document partagé (le payload voyage ENTIER : le vider de ce
+292:  *  qu'on ne connaît pas est exactement ce qu'aucun enregistrement n'a le droit
+293:  *  de faire).
+294:  *
+295:  *  D'où ce second verrou, appliqué AVANT d'écrire (App.jsx,
+296:  *  `guardDistantExperiments`) : la copie DISTANTE — le document partagé — est
+297:  *  relue, et ce qu'elle porte et que nous n'avons pas est REMIS, tant qu'aucune
+298:  *  suppression n'est enregistrée pour lui (une 🗑 faite ailleurs reste une 🗑).
+299:  *
+300:  *  @param {Array} distant  les expériences de la copie partagée (relue)
+301:  *  @param {Array} outgoing la liste que ce poste s'apprête à écrire
+302:  *  @param {Array} deletions les suppressions enregistrées (déjà sans les levées)
+303:  *  @returns {{tests:Array, rescued:Array, removed:number, collapsed:Array}}
+304:  */
+305: export const protectDistantDrops = (distant, outgoing, deletions) => {
+306:   const { tests: list, collapsed } = collapseExperimentTwins(outgoing);
+307:   const { tests: distantList, collapsed: distantCollapsed } = collapseExperimentTwins(distant);
+308:   const records = normalizeDeletions(deletions);
+309:   const rescued = unrecordedDrops(distantList, list, records);
+310:   let out = list;
+311:   if (rescued.length) {
+312:     const seen = new Set(list.map(experimentKey).filter(Boolean));
+313:     out = list.slice();
+314:     rescued.forEach((t) => {
+315:       const key = experimentKey(t);
+316:       if (key && seen.has(key)) return;
+317:       if (key) seen.add(key);
+318:       out.push(t);
+319:     });
+320:   }
+321:   const tests = withoutDeletedExperiments(out, records);
+322:   return { tests, rescued, removed: out.length - tests.length, collapsed: collapsed.concat(distantCollapsed) };
+323: };
+324: 
+325: /** L'id d'une entrée SANS id : le seul cadeau que ce module se permet
+326:  *  (l'écran en donnait un, chacun de son côté — c'est la même formule). */
+327: const defaultFreshId = () => 't' + Math.random().toString(36).substr(2, 9) + Date.now();
+328: 
+329: /** UN ID, UNE LIGNE — l'effondrement des JUMEAUX écrits par une version
+330:  *  antérieure du programme : deux lignes (ou plus) portant le MÊME `id` sous des
+331:  *  noms DIFFÉRENTS. C'est le cas des fichiers de reprise : l'objet du Drive garde
+332:  *  l'id de l'expérience À TRAVERS SES RENOMMAGES (« Test 87 » ≡ « pdb_ » ≡

@@ -1,0 +1,53 @@
+250:   const idOnly = String(rescuedRow.id || '');
+251:   const kept = T.withoutDeletedExperiments(rowsOfId, [{ id: idOnly, datasetId: 'ds_sim', deletedAt: 1000 }]);
+252:   say(`  un record sur ${idOnly} retirerait : ${rowsOfId.map((t) => `« ${t.name} »`).join(' + ')} → `
+253:     + `${kept.length} ligne(s) restante(s) (il en faut 1)`);
+254:   leak('un record portant l\'id retire AUSSI le nom qui n\'était pas visé',
+255:     `${rowsOfId.length} ligne(s) → ${kept.length} : le modèle n\'a pas de place pour « un des noms d\'un id »`,
+256:     rowsOfId.length > 1 && kept.length === 0);
+257: 
+258:   say('');
+259:   say('⑧ LA LEVÉE (🛡 `recordExperimentRevivals`) — deux dates, DEUX HORLOGES DE POSTES');
+260:   fakeStore.clear();
+261:   const T0 = 1_700_000_000_000;
+262:   /* Le VRAI geste (App.jsx:1969) : `recordExperimentDeletions(prev, next, …)` —
+263:      la ligne ÉTAIT là, elle n'y est plus. `before` non vide, sinon
+264:      experimentTombstones.js:442 rend la main sans rien enregistrer. */
+265:   T.recordExperimentDeletions([{ id: idOnly, name: rescuedRow.name, datasetId: 'ds_sim' }], [], 'ds_sim', T0);
+266:   const del = T.deletionsForDataset(T.loadExperimentDeletions(), 'ds_sim');
+267:   const rev = T.recordExperimentRevivals([{ id: idOnly, name: rescuedRow.name, datasetId: 'ds_sim' }], 'ds_sim', T0 - 60_000).revivals;
+268:   const standing = T.withoutRevivedExperiments(del, T.revivalsForDataset(rev, 'ds_sim'));
+269:   const written = T.withoutDeletedExperiments([{ id: idOnly, name: rescuedRow.name, datasetId: 'ds_sim' }], standing);
+270:   say(`  suppression enregistrée à +0 s, levée écrite à −60 s (horloge du poste en retard) → `
+271:     + `suppression qui tient : ${standing.length} ; lignes écrites : ${written.length}`);
+272:   leak('la levée ne bat pas une suppression écrite 60 s « plus tard » par un autre poste',
+273:     written.length ? '' : 'la copie écrite repart SANS l\'expérience reprise : le verrou d\'écriture la reprend au premier enregistrement',
+274:     standing.length > 0 && written.length === 0);
+275: } else {
+276:   say('  (aucun id empilé dans les fichiers disponibles : rien à éprouver ici)');
+277: }
+278: 
+279: say('');
+280: say('═══════════════════════════════════════════════════════════════════════════');
+281: if (HOLES.length) {
+282:   say(`  ${HOLES.length} FUITE(S) CONFIRMÉE(S) — une expérience reprise peut repartir en SILENCE :`);
+283:   HOLES.forEach((h) => say(`    ✘ ${h}`));
+284:   say('');
+285:   say('  LE FIL COMMUN : DEUX IDENTITÉS QUI NE S\'ACCORDENT PAS.');
+286:   say('    · l\'ÉCRAN et l\'import (➕) identifient une expérience par son NOM (`testGroupKey`) ;');
+287:   say('    · les GARDES (relecture, verrou d\'écriture, 🗑) l\'identifient par son ID (`experimentKey`).');
+288:   say('    La reprise ramène les noms d\'aujourd\'hui avec les ids d\'un autre nom (« Test 87 » ≡ « pdb_ » ≡');
+289:   say('    « pdb_CDK2_CyclinA »), donc l\'ajout empile un jumeau, et les gardes — elles — croient la ligne');
+290:   say('    reprise « déjà là » : elles la lâchent sans un mot, et l\'enregistrement automatique publie ce vide.');
+291: } else {
+292:   say('  Aucune fuite : une expérience reprise ne peut plus repartir en silence.');
+293: }
+294: say('═══════════════════════════════════════════════════════════════════════════');
+295: 
+296: writeFileSync('_diag_twins.txt', out.join('\n'), 'utf8');
+297: console.log('\n→ rapport écrit : _diag_twins.txt');
+298: process.exitCode = HOLES.length ? 1 : 0;
+299: 
+300: 
+301: 
+302: 

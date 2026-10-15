@@ -1,0 +1,145 @@
+56: /** Nombre de records conservés (les plus récents). Une suppression n'est jamais
+57:  *  oubliée à court terme ; la limite n'existe que pour qu'un localStorage ne
+58:  *  grossisse pas indéfiniment sur des années d'usage. */
+59: export const MAX_RECORDS = 500;
+60: 
+61: const idOf = (x) => {
+62:   if (x && typeof x === 'object') return String(x.id === undefined || x.id === null ? '' : x.id).trim();
+63:   return x === undefined || x === null ? '' : String(x).trim();
+64: };
+65: 
+66: const nameOf = (x) => (x && typeof x === 'object'
+67:   ? String(x.name === undefined || x.name === null ? '' : x.name).trim()
+68:   : '');
+69: 
+70: const datasetOf = (x) => String(
+71:   x && typeof x === 'object' && x.datasetId !== undefined && x.datasetId !== null ? x.datasetId : ''
+72: );
+73: 
+74: /** L'identité d'une EXPÉRIENCE : son id, sinon son nom. Rien de reconnaissable
+75:  *  (ni id ni nom) → '', et une entrée sans identité n'est jamais « supprimée »
+76:  *  ni « remise » : elle n'est pas identifiable. */
+77: export const experimentKey = (test) => {
+78:   const id = idOf(test);
+79:   if (id) return `id:${id}`;
+80:   const name = nameOf(test);
+81:   return name ? `name:${name}` : '';
+82: };
+83: 
+84: /** L'ID seul d'une expérience ('' quand elle n'en a pas) — l'identité qui TRAVERSE
+85:  *  les renommages : l'objet du Drive garde l'id d'une expérience pendant que son
+86:  *  nom change. Exporté pour que l'écran (➕ App.jsx) et la fenêtre d'import
+87:  *  (`experimentRowChoices`) n'aient pas leur propre variante de la règle : une
+88:  *  identité, un seul endroit — c'est exactement la divergence nom/id qui laissait
+89:  *  une expérience reprise repartir en silence. */
+90: export const experimentId = (test) => idOf(test);
+91: 
+92: /** La clé d'un RECORD : `<datasetId>::<id>` (ou `<datasetId>::#<nom>` quand le
+93:  *  record n'a pas d'id). L'id seul ne suffit pas — deux datasets peuvent porter
+94:  *  des expériences de même id (copie d'une sauvegarde). */
+95: export const recordKey = (entry) => {
+96:   const id = idOf(entry);
+97:   if (id) return `${datasetOf(entry)}::${id}`;
+98:   const name = nameOf(entry);
+99:   return name ? `${datasetOf(entry)}::#${name}` : '';
+100: };
+101: 
+102: /** Une liste HORODATÉE propre et utilisable (suppressions comme levées) : les
+103:  *  entrées sans identité sont écartées, deux records de même identité n'en font
+104:  *  qu'un (la date la plus récente gagne) et la liste est bornée à MAX_RECORDS,
+105:  *  la plus récente d'abord. Accepte `['t12']` comme `[{ id, name, deletedAt }]`
+106:  *  — une entrée écrite par une version plus ancienne (ou un payload abîmé)
+107:  *  reste donc comprise — et une liste IMBRIQUÉE, comme le fait déjà
+108:  *  normalizeTombstones pour les projets. */
+109: const normalizeStamped = (list, field) => {
+110:   const flat = [];
+111:   const walk = (v) => {
+112:     if (Array.isArray(v)) v.forEach(walk);
+113:     else if (v) flat.push(v);
+114:   };
+115:   walk(list);
+116:   const byKey = new Map();
+117:   flat.forEach((raw) => {
+118:     const entry = {
+119:       id: idOf(raw),
+120:       name: nameOf(raw),
+121:       datasetId: datasetOf(raw),
+122:       [field]: Number(raw && typeof raw === 'object' ? raw[field] : 0) || 0
+123:     };
+124:     const key = recordKey(entry);
+125:     if (!key) return;
+126:     const prev = byKey.get(key);
+127:     if (!prev || entry[field] >= prev[field]) byKey.set(key, entry);
+128:   });
+129:   return Array.from(byKey.values())
+130:     .sort((a, b) => b[field] - a[field])
+131:     .slice(0, MAX_RECORDS);
+132: };
+133: 
+134: export const normalizeDeletions = (list) => normalizeStamped(list, 'deletedAt');
+135: export const normalizeRevivals = (list) => normalizeStamped(list, 'revivedAt');
+136: 
+137: /** Enregistrer la suppression d'une expérience (la plus récente en tête). */
+138: export const addDeletion = (deletions, test, deletedAt = Date.now()) => {
+139:   const entry = {
+140:     id: idOf(test),
+141:     name: nameOf(test),
+142:     datasetId: datasetOf(test),
+143:     deletedAt: Number(deletedAt) || Date.now()
+144:   };
+145:   if (!recordKey(entry)) return normalizeDeletions(deletions);
+146:   return normalizeDeletions([entry, ...(Array.isArray(deletions) ? deletions : [])]);
+147: };
+148: 
+149: /** Enregistrer le RETOUR d'une expérience (levée de suppression, datée). */
+150: export const addRevival = (revivals, test, revivedAt = Date.now()) => {
+151:   const entry = {
+152:     id: idOf(test),
+153:     name: nameOf(test),
+154:     datasetId: datasetOf(test),
+155:     revivedAt: Number(revivedAt) || Date.now()
+156:   };
+157:   if (!recordKey(entry)) return normalizeRevivals(revivals);
+158:   return normalizeRevivals([entry, ...(Array.isArray(revivals) ? revivals : [])]);
+159: };
+160: 
+161: /** Retirer la levée d'une expérience : une SUPPRESSION postérieure doit
+162:  *  l'emporter (« 🗑 » après une restauration est une vraie suppression). */
+163: export const withoutRevival = (revivals, test) => {
+164:   const wanted = { id: idOf(test), name: nameOf(test), datasetId: datasetOf(test) };
+165:   const key = recordKey(wanted);
+166:   if (!key) return normalizeRevivals(revivals);
+167:   return normalizeRevivals(revivals).filter((r) => recordKey(r) !== key);
+168: };
+169: 
+170: /** La RÈGLE d'identité d'un record, une seule fois : même id (ou même nom quand
+171:  *  l'un des deux n'a pas d'id), et un dataset absent d'un côté au moins (ou
+172:  *  identique) — un record sans dataset vaut partout. */
+173: const sameStamped = (a, b) => {
+174:   if (!a || !b) return false;
+175:   const aId = idOf(a);
+176:   const bId = idOf(b);
+177:   const sameName = !!nameOf(a) && nameOf(a) === nameOf(b);
+178:   if (!(aId && bId ? aId === bId : sameName)) return false;
+179:   return !a.datasetId || !b.datasetId || a.datasetId === b.datasetId;
+180: };
+181: 
+182: /** LES SUPPRESSIONS QUI TIENNENT ENCORE : celles qu'aucune levée plus récente
+183:  *  (ou de même date) n'a annulées. C'est la seule lecture des suppressions
+184:  *  d'expériences — lever une suppression est donc vu de partout d'un coup. */
+185: export const withoutRevivedExperiments = (deletions, revivals) => {
+186:   const lifted = normalizeRevivals(revivals);
+187:   const records = normalizeDeletions(deletions);
+188:   if (!lifted.length) return records;
+189:   return records.filter((d) => !lifted.some(
+190:     (r) => sameStamped(r, d) && (Number(r.revivedAt) || 0) >= (Number(d.deletedAt) || 0)
+191:   ));
+192: };
+193: 
+194: /** Les records tels qu'un PAYLOAD les porte : un record sans dataset appartient
+195:  *  au dataset qui l'a écrit (le payload d'un dataset ne parle que de lui). */
+196: const forDataset = (list, norm, datasetArg) => {
+197:   const datasetId = datasetArg === undefined || datasetArg === null ? '' : String(datasetArg);
+198:   return norm(list).map((r) => (!r.datasetId && datasetId ? { ...r, datasetId } : r));
+199: };
+200: 
