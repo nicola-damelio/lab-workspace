@@ -23,6 +23,12 @@
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+/* ⬚ LE VALIDATEUR DE LA RAMPE DU FOND (utils/viewerBackground) : `captureThemeGlobal`
+   lui pose UNE question — « la rampe de ce fichier est-elle ALLUMÉE ? » — parce
+   qu'une rampe ÉTEINTE ne voyage pas (voir la source). C'est le VRAI module, jamais
+   une doublure : la règle du garde-fou est EXÉCUTÉE, comme celle de
+   _viewer_background_test.mjs, et non recopiée à la main. */
+import { bgGradientOf } from './src/utils/viewerBackground.js';
 
 let passed = 0;
 const ok = (cond, what) => {
@@ -93,7 +99,9 @@ const fakeLocalStorage = {
   getItem: (k) => (store.has(k) ? store.get(k) : null),
   setItem: (k, v) => { store.set(k, String(v)); },
 };
-const H = new Function('__ls', sandbox.replace(/\blocalStorage\b/g, '__ls'))(fakeLocalStorage);
+// `bgGradientOf` entre dans le banc par la PORTE (un paramètre) : le corps découpé
+// appelle le module réel sans qu'aucune doublure ne soit écrite ici.
+const H = new Function('__ls', 'bgGradientOf', sandbox.replace(/\blocalStorage\b/g, '__ls'))(fakeLocalStorage, bgGradientOf);
 
 /* ══ 1. LES DEUX MAGASINS SONT SÉPARÉS ════════════════════════════════════ */
 eq(H.VIEWER_THEME_KEY, 'labViewerThemes', 'le thème a son propre magasin');
@@ -148,6 +156,25 @@ ok(glob.fog === true && glob.background === '#101010' && glob.clip && glob.shado
   'la capture garde la scène : brouillard · fond · clipping · ombres');
 ok(glob.backgroundGradient && glob.backgroundGradient.on === true && glob.backgroundGradient.to === '#202020',
   '…et la RAMPE du fond (⬚ sa seconde couleur, son angle et son interrupteur), qui prolonge cette couleur');
+/* ⬚ UNE RAMPE ÉTEINTE NE VOYAGE PAS — le défaut de cette session : « the 3D viewer
+   loses its gradient background after a style file loads — and there is no way to
+   restore it ». La rampe éteinte étant l'état PAR DÉFAUT du viewer, « le fichier dit
+   on:false » et « le fichier ne dit RIEN de la rampe » étaient indiscernables : un
+   style enregistré SANS rampe ÉTEIGNAIT celle de l'écran, à chaque rappel automatique
+   (VIEWER_STYLE_RECALL_DELAY_MS), et le geste semblait ne jamais tenir. Les trois
+   formes sont EXÉCUTÉES ici : seule la figure enregistrée AVEC sa rampe la ramène. */
+const rampOffExplicit = H.captureThemeGlobal({
+  ...setup, backgroundGradient: { on: false, to: '#202020', angle: 90 },
+});
+ok(!('backgroundGradient' in rampOffExplicit),
+  'une rampe `on:false` n’est PAS capturée : le fichier laisse la rampe de l’écran TRANQUILLE');
+const rampSilent = H.captureThemeGlobal({ ...setup, backgroundGradient: { to: '#202020', angle: 90 } });
+ok(!('backgroundGradient' in rampSilent),
+  '…et un fichier qui ne dit RIEN de la rampe (un style écrit avant cette règle) non plus');
+has('if (src.backgroundGradient && !bgGradientOf(src.backgroundGradient).on) delete src.backgroundGradient;',
+  '…le LECTEUR (applyThemeGlobal) suit la même règle que l’ÉCRIVAIN : un fichier DÉJÀ sur le Drive se répare donc tout seul');
+eq(countOf(/!bgGradientOf\(/g), 2,
+  'la règle est écrite UNE fois de chaque côté (capture + lecture du ⚙️ setup), jamais dupliquée');
 ok(glob.generalLook && glob.palettes && glob.sstrucColors && glob.catStyles,
   '…et la roue ⚙ (palettes + look général), les couleurs de 2°-structure et les menus');
 ok(glob.ray && glob.esp,
@@ -155,7 +182,8 @@ ok(glob.ray && glob.esp,
 eq(Object.keys(glob).sort(), [...H.THEME_GLOBAL_KEYS].sort(),
   'RIEN d’autre : ni la version, ni la date, ni un champ inconnu');
 ok(!('savedAt' in glob) && !('v' in glob), '…en particulier pas les métadonnées du fichier');
-has('const applyThemeGlobal = (global) => applyViewerSetup(', 'l’environnement est relu par le LECTEUR des ⚙️ setups');
+has('return applyViewerSetup({ ...src, catStyles: src.catStyles || {} });',
+  'l’environnement est relu par le LECTEUR des ⚙️ setups');
 ok(VIEW.indexOf('const applyThemeGlobal = (global)') > VIEW.indexOf('const applyViewerSetup = (s) => {'),
   '…et il est défini APRÈS applyViewerSetup : au niveau module il ne l’aurait pas vu');
 eq(countOf(/const applyThemeGlobal = /g), 1, 'une seule définition (aucune copie au niveau module)');

@@ -4234,19 +4234,68 @@ déplier », le libellé, ce qui reste ; et le cahier : **plus aucune** `filtere
 marqueur observé, le bouton, `no-print` sur le marqueur, l'écoute de `lab:before-print` **et** de
 `beforeprint`).
 
+### ④ La compression quitte le fil principal (le point « 4 »)
+
+Le rendu de main ② plaçait la compression **après** la page demandée : il ne la rendait pas plus
+courte. `src/utils/datasetCompression.js` et `datasetCompression.worker.js` la déplacent vraiment.
+
+`JSON.stringify` reste sur le fil principal — c'est le prix du texte : **72 ms** pour 6,2 Mo de JSON,
+mesuré sur cette machine. `LZString.compressToUTF16` (le poste dominant) part dans un **web worker**,
+créé à la première sauvegarde puis partagé : le fil principal n'attend plus qu'une promesse.
+
+| ce qui tournait | payload | coût fil principal |
+| --- | --- | --- |
+| `stringify` + `LZString` (avant) | 6,2 Mo | **3 449 ms** |
+| `stringify` + envoi au fil (après) | 6,2 Mo | **71 ms** |
+
+La sortie est **caractère pour caractère** l'ancienne (même LZString, même encodage UTF-16) : Firestore,
+les fichiers HTML et le Drive relisent exactement la même chose — aucun format nouveau, aucune
+migration. La sonde l'établit en **exécutant** le corps du fil (`compressRequest`,
+`handleCompressionMessage`) sous node et en le comparant à `LZString.compressToUTF16` sur des charges
+réelles.
+
+**Qui passe par le fil, et avec quelle urgence :**
+
+| chemin | geste | pourquoi |
+| --- | --- | --- |
+| enregistrement automatique (`runSave`) | **fil** — `await compressDatasetForSave(rawData, urgent)` | c'est CE geste qui tombait sur le clic |
+| base d'administration (minuteur de 1,5 s) | **fil** | même travail, même instant |
+| sortie d'un dataset (`saveLeavingDataset`) | **fil** | la page d'arrivée est déjà peinte : plus rien ne doit occuper le fil |
+| vidage d'onglet (`flushPendingSave`) | **synchrone** (`urgent = true`) | l'onglet s'en va : une promesse n'aurait plus le temps d'aboutir, et la dernière minute du travail ne se rejoue pas |
+| « Save HTML », sauvegarde hebdomadaire, création d'un dataset | **synchrone** (inchangé) | gestes ponctuels, jamais déclenchés par une frappe |
+
+**Aucune sauvegarde ne se perd** — c'est la garantie du module, et la raison d'être des replis
+vérifiés un par un : fil indisponible (page ouverte depuis un fichier, politique de sécurité, vieux
+navigateur), fabrique qui lève, `postMessage` qui lève, réponse illisible, `{ok: false}`, fil mort
+(`error`), silence complet (échéance de 20 s), `dispose()`. Dans chacun de ces cas la promesse rend la
+charge **correcte**, compressée sur le fil principal : plus lent, jamais perdu. Le seul échec qui
+remonte est celui de la compression synchrone elle-même (mémoire épuisée) — exactement comme avant.
+
+*Vérifier :* `node _dataset_compression_test.mjs` — **106** assertions (l'équivalence avec l'ancienne
+charge exécutée sur 8 charges réelles, la conversation du fil, puis **le chronomètre** : avec un fil
+factice et une compression « synchrone » de 200 ms, le geste rend la main en quelques millisecondes et
+c'est le fil qui travaille ; sans fil, le repli paie les 200 ms — mesuré, pas supposé —, les 8 états
+de repli, et le câblage d'`App.jsx`).
+
 Le reste n'a pas bougé d'un caractère : `_background_save_test.mjs` **56** ·
 `_condition_page_test.mjs` **123** · `_project_experiment_link_test.mjs` **77** ·
 `_experiment_vanishing_test.mjs` **92** · `_page_parking_test.mjs` **54** ·
 `_dataset_creation_guard_test.mjs` **25** · `_backup_file_test.mjs` **129** ;
 `npx oxlint src/App.jsx src/components/LabNotebook.jsx src/utils/*.js` — **0 erreur** (le seul
 avertissement, `backupCountsOf` importé sans usage dans `App.jsx`, était déjà là) ;
-`npm run build` — **exit 0**.
+`npm run build` — **exit 0**, et le fil est bien embarqué par Vite
+(`dist/assets/datasetCompression.worker-*.js`, 6 Ko) ; les **48** suites qui lisent
+`App.jsx` ou qui touchent la sauvegarde, la compression et les fichiers de sauvegarde
+— **48/48** vertes ; et le balayage **COMPLET** des **213** suites : **207/213**, les
+**6** rouges étant *exactement* celles qui l'étaient déjà avant ce chantier
+(`_cysteine_panel_layout`, `_docking_scatter_card`, `_md_wall`, `_sequence_charge`,
+`_viewer_keyframes`, `_viewer_rings_gradient` — aucune ne lit `App.jsx`).
 
-**Ce qui reste ouvert, honnêtement :** la compression LZString est **toujours synchrone**. Le rendu
-de main la place *après* la page demandée, il ne la rend pas plus rapide : sur un dataset de
-plusieurs dizaines de mégaoctets, une image sautera encore au moment où la sauvegarde démarre (la
-barre latérale le dit : « Saving… »). La compression dans un *worker* réglerait cela — c'est le
-prochain pas si le besoin se confirme.
+**Ce qui reste ouvert, honnêtement :** les trois chemins *ponctuels* du tableau ④ (« Save HTML », la
+sauvegarde hebdomadaire, la création d'un dataset) compressent encore **sur le fil principal** — ils
+ne partent jamais d'une frappe, mais un dataset de plusieurs dizaines de mégaoctets y fera sauter une
+image. Et le `JSON.stringify` (72 ms pour 6,2 Mo, mesuré) reste sur le fil : c'est le prix du texte,
+d'un ordre en dessous des 3,4 s de LZString que l'on vient de déplacer.
 
 
 
@@ -4790,7 +4839,8 @@ dire. Et il n'y a **pas de faux refus** : un ancien fichier HTML ne **déclarait
 pas de comptes, il n'y a donc rien à lui comparer — il est relu comme avant, et
 reste accepté par les deux sélecteurs de fichier.
 
-**Ce qui n'est PAS touché.** La compression de la charge (LZString), la fenêtre
+**Ce qui n'est PAS touché.** La compression de la charge (LZString — son
+*format*, pas le fil qui la calcule : voir ④), la fenêtre
 d'import et ses règles d'adoption (fusion, tombes, levées, import partiel), le
 dossier Drive des sauvegardes et les fichiers **déjà écrits** (relus à
 l'identique) : rien n'est déplacé, renommé ni supprimé sur le Drive, et aucun
@@ -6281,6 +6331,14 @@ qu'un : ce que la page installe, c'est le **récepteur** de la condition. Il lit
 la sous-section `Structure` (`dockFolderCtx('Structure')`), puis la sous-section `Structure` et la
 sous-section `Docking` dans `Data` (`ctxs` : le dossier de calcul importé, et les envois du viewer 3D).
 
+⚠ **Corrigé le 14/10/2026** (voir la section « Test_86 » en fin de document) : le `ctxs` annoncé
+ci-dessus — « `…/Data/pdb files` » — n'était **pas** celui du code, qui passait `…/Data/Structure`. Le
+dossier où la page ÉCRIT ses PDB importés (`Data/pdb files`, slugué `pdb_files`) manquait donc à la
+liste lue, et le 📂 répondait « No .pdb file in this experiment's Drive folders » alors que la page
+venait elle-même d'y déposer les modèles du cluster. Une constante (`DOCKING_PDB_ARCHIVE_SUBSECTION`)
+porte désormais la sous-section pour l'écriture **et** pour la lecture, et le 📂 lit les **trois**
+branches `Data` (`Structure`, `pdb files`, `Docking`).
+
 `pickTopologyFromFolder` :
 
 * décompresse un `.pdb.gz` par ses **octets magiques** (`1f 8b`) — la même lecture que celle des
@@ -6615,6 +6673,90 @@ molécule que le calcul ne pouvait pas replier redevient libre sous le seul bool
 ```bash
 node _disulfide_fold_test.mjs         # 157 assertions : le module du pont, la conduite, le graphe des moteurs ET la forme réduite
 node _structure_calculation_test.mjs  # 778 assertions : les bornes du module, le 🧬 du viewer, et le pont qui refermait le graphe sur un cycle
+```
+
+
+
+## « Test_86 » : le 📂 de la page Docking ne lisait pas le dossier où elle ÉCRIT (14/10/2026)
+
+**La demande, mot pour mot.** « *su vado du test_86 non vedo il suo pdb e se clicco su “topology from
+drive folder” ottengo il messaggio : No .pdb / .ent / .cif / .mmcif / .mol2 / .sdf file in this
+experiment's Drive folders — checked: projects/NATURAL_ARSENAL_Antibiotics/Test_86/instance1/
+experiment_setup/Structure · …/experiment_setup · …/instance1 · …/Test_86 · …/instance1/data/Structure ·
+…/instance1/data · …/instance1/data/Docking. Ma io creo che il pdb sia in
+projects/NATURAL_ARSENAL_Antibiotics/Test_86/instance1/data/pdb_files* »
+
+**Le défaut, et il est démontrable.** L'utilisateur a raison, et **la liste de dossiers que le bouton cite
+le prouve** : `…/data/pdb_files` n'y figure pas. Or ce dossier est ÉCRIT par cette page même —
+`handleCalcDir` archive chaque PDB décompressé de `8_seletopclusts` sous
+`<projet>/<test>/<instance>/Data/pdb files` (`archive(…, ['Data', 'pdb files'], 'Data')`, que
+`resolveDrivePathFromNames` slugué en `pdb_files`). Le 📂 « Topology from Drive folder », lui, ne lisait
+que le dossier canonique et deux branches `Data/…` :
+
+| ce que la page fait | le dossier | était lu par le 📂 ? |
+| --- | --- | --- |
+| elle **ÉCRIT** les PDB de l'import (`handleCalcDir`, `8_seletopclusts`) | `…/<instance>/data/pdb files` | **NON** |
+| elle écrit `capri_ss.tsv` | `…/<instance>/data` | oui |
+| le viewer 3D envoie une structure | `…/<instance>/data/Structure` | oui |
+| le viewer 3D envoie un fichier de la page | `…/<instance>/data/Docking` | oui |
+| 📁 Create drive folder fabrique | `…/<instance>/experiment_setup/Structure` | oui |
+
+Un PDB que **la page avait elle-même déposé** était donc invisible pour son propre bouton, et la phrase
+« *No .pdb … file in this experiment's Drive folders* » était **fausse** : elle affirmait une absence là
+où le fichier était — dans `projects/NATURAL_ARSENAL_Antibiotics/Test_86/instance1/data/pdb_files`, le
+chemin exact que l'utilisateur citait.
+
+**Pourquoi c'est arrivé, et ce que ça dit.** Le commentaire du geste — et la doc de la session des
+« deux 📂 qui manquaient » (§② Docking, plus haut) — annonçaient **déjà** `ctxs` = « `…/Data/pdb files`,
+le dossier de calcul importé, et `…/Data/Docking` ». Le code, lui, passait `Structure` à la place de
+`pdb files`. La phrase était juste, la **chaîne** ne l'était pas : deux copies d'un même nom, et une
+seule a été relue. C'est un défaut de **copie**, pas de raisonnement — et c'est exactement ce qu'une
+constante supprime.
+
+**La réparation : une seule chaîne, écrite ET relue au même endroit.**
+
+```js
+const DOCKING_PDB_ARCHIVE_SUBSECTION = 'pdb files';               // nommée UNE fois
+
+subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,                       // l'archive de référence (dockingDriveCtx)
+['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data'                  // …et l'écriture d'un PDB importé
+dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data')             // …et la LECTURE du 📂
+```
+
+Les dossiers lus par le 📂 sont donc, dans cet ordre : le canonique (`…/experiment_setup/Structure`, puis
+sa remontée : `experiment_setup`, l'instance, l'expérience), `…/data/Structure`, **`…/data/pdb files`**,
+`…/data/Docking`. Le message du bouton — celui qui a été signalé — nomme désormais `data/pdb_files` dans
+sa liste « checked: », et le fichier de Test_86 s'y trouve.
+
+**Ce qui n'a PAS bougé** : le geste ne crée rien, n'envoie rien, ne renomme rien. La reprise
+**automatique** est intacte (les fichiers que le dataset déclare sont toujours re-téléchargés par leur
+lien) : le 📂 est le geste pour un fichier qu'**aucune** déclaration ne nomme. Et `DOCKING_TOPOLOGY_EXTS`
+n'a pas été touché : `.pdb .ent .cif .mmcif .mol2 .sdf` — ce que la page sait ouvrir.
+
+**⚠ Ce que le 📂 ne propose toujours pas** (et il faut le savoir) : un `.pdb.gz` **déposé à la main**.
+L'extension d'un nom est la DERNIÈRE (`driveFileExt('x.pdb.gz')` → `gz`), donc la liste des extensions
+l'écarte — alors que `pickTopologyFromFolder` sait très bien décompresser un gzip. Ce n'est pas le défaut
+signalé : l'import de la page écrit, lui, des `.pdb` **décompressés** (c'est même la raison d'être de
+`Data/pdb files`), donc un `.pdb.gz` n'y arrive que par un dépôt humain.
+
+**Mesuré** — le chemin exact du défaut est vérifié par le **constructeur de chemin de l'application**,
+jamais recopié : `canonicalExperimentPath({ project: 'P', test: 'Test_86', instance: 'instance1',
+section: 'Data', subsection: 'pdb files' })` rend `['projects','P','Test_86','instance1','data',
+'pdb_files']`, et `sanitizeSlug('pdb files')` rend `pdb_files`. `_docking_virgin_page_test.mjs` passe de
+**64** à **69** assertions (l'archive nommée une fois, l'écriture ET la lecture par la même constante, le
+dossier lu par le 📂, et `data/pdb_files` prouvé par la règle de chemin). Suites relancées, toutes
+vertes : `_docking_virgin_page_test` **69**, `_structure_windows_test` **120** (son §📂 de la page
+Docking exige les trois branches, archive comprise), `_experiment_folder_files_test` **185**,
+`_viewer_source_drive_archive_test` **35**. `npx oxlint` sur les trois fichiers touchés : **0 erreur**
+(1 avertissement, celui d'avant : `react-hooks(exhaustive-deps)` sur `activeTest`,
+`DockingSections.jsx:696`). `npx vite build` : ✓ **7,01 s**.
+
+**Vérifier soi-même**
+
+```bash
+node _docking_virgin_page_test.mjs     # 69 assertions : la page vierge, son 📂, et le dossier qu'elle ÉCRIT
+node _structure_windows_test.mjs       # 120 : les 📂 de chaque page, leur rangée, et leurs branches
+node _experiment_folder_files_test.mjs # 185 : le dossier lu, la remontée d'un cran, la création
 ```
 
 

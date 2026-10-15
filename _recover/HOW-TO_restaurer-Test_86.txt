@@ -18,7 +18,7 @@
    enregistrée 
 
 ## Le fichier écrit (LOCAL — rien n’a été écrit sur le Drive)
-   _recover\RESTORE-Test_86_2026-10-14.json  (16 Ko)
+   _recover\RESTORE-Test_86_2026-10-15.json  (16 Ko)
    comptes déclarés : {"tests":1,"projects":0,"datasetProtocols":0,"storages":0,"molecules":0,"calculationEntries":0,"compoundMeta":0,"nmrExperiments":0}
    ✔ VALIDÉ par le validateur de l’application
    relecture : 1 expérience(s) — « Test 86 » (id t17918122680048458)
@@ -26,7 +26,7 @@
 
 ## Le geste, dans l’application
    1. ouvrir le dataset « GEC-UPJV-projects » (celui qui a perdu l’expérience) ;
-   2. 📂 Load HTML → RESTORE-Test_86_2026-10-14.json  (dossier _recover/) ;
+   2. 📂 Load HTML → RESTORE-Test_86_2026-10-15.json  (dossier _recover/) ;
    3. cocher la page « Expériences » seulement — une seule ligne, déjà cochée ;
    4. valider avec ➕ AJOUT (Add), jamais ♻️ REMPLACEMENT.
    → l’expérience revient avec son id d’origine, et sa suppression locale est levée ;

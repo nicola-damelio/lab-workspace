@@ -1723,6 +1723,21 @@ const captureThemeGlobal = (setup) => {
   const src = setup || {};
   const out = {};
   THEME_GLOBAL_KEYS.forEach((k) => { if (k in src) out[k] = src[k]; });
+  /* ⬚ UNE RAMPE ÉTEINTE NE VOYAGE PAS. Le rapport de cette session : « the 3D
+     viewer loses its gradient background after a style file loads — and there is
+     no way to restore it ». La cause est ici : la rampe ÉTEINTE est l'état PAR
+     DÉFAUT du viewer (BG_GRADIENT_DEFAULT_ON = false), donc « le fichier dit
+     on:false » et « le fichier ne dit RIEN de la rampe » sont indiscernables — un
+     style enregistré sans rampe ÉTEIGNAIT celle de l'écran, à chaque montage du
+     viewer (le rappel automatique d'une expérience, VIEWER_STYLE_RECALL_DELAY_MS),
+     et le geste semblait donc ne jamais tenir.
+     La règle est celle du module : un fond dégradé n'est jamais IMPOSÉ — il n'est
+     pas non plus jamais RETIRÉ par un fichier. Une figure enregistrée AVEC sa
+     rampe la ramène (la demande : « two colors and their direction ») ; une figure
+     enregistrée sans rampe laisse celle du poste TRANQUILLE, exactement comme un
+     fichier écrit avant cette fonctionnalité (applyViewerSetup ne touche alors
+     plus au dégradé du tout). Retirer le dégradé reste le geste de ⬚. */
+  if (out.backgroundGradient && !bgGradientOf(out.backgroundGradient).on) delete out.backgroundGradient;
   return out;
 };
 // The environment alone, applied over what is on screen (the class styles are the
@@ -23528,7 +23543,16 @@ useEffect(() => {
 // applied over what is on screen; the class styles are the layer the two modes add
 // on top. It is the very reader the ⚙️ setups use, so a file from another build is
 // merged over the defaults and can never break the viewer.
-const applyThemeGlobal = (global) => applyViewerSetup({ ...(global || {}), catStyles: (global && global.catStyles) || {} });
+const applyThemeGlobal = (global) => {
+  const src = { ...(global || {}) };
+  /* ⬚ …ET LE LECTEUR A LA MÊME RÈGLE QUE L'ÉCRIVAIN (voir captureThemeGlobal) :
+     un fichier DÉJÀ sur le Drive — écrit par la version qui enregistrait `on:false`,
+     ou par un build antérieur — ne doit pas non plus ÉTEINDRE la rampe de l'écran.
+     Un fichier n'apporte qu'une rampe ALLUMÉE ; c'est ce qui rend le défaut
+     réparable même pour les styles déjà enregistrés par l'utilisateur. */
+  if (src.backgroundGradient && !bgGradientOf(src.backgroundGradient).on) delete src.backgroundGradient;
+  return applyViewerSetup({ ...src, catStyles: src.catStyles || {} });
+};
 // Every section on screen, grouped by MOLECULAR CLASS — the unit a THEME is keyed
 // by (protein · nucleic acid · lipid · sugar · ligand · water · ion).
 const sceneSectionsByClass = () => {

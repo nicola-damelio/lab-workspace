@@ -382,7 +382,16 @@ ok(DOCKSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore'
 ok(DOCKSRC.includes("const DOCKING_RESTORE_KIND = 'docking';"), 'le type de donnée docking est déclaré une fois');
 ok(DOCKSRC.includes("const dockingDriveCtx = (test = {}, instance = '') => ({"),
   'le dossier d’archive est le dossier canonique de l’instance');
-ok(/subsection: 'pdb files'/.test(DOCKSRC), '…la même sous-section que les .pdb importés');
+/* LA SOUS-SECTION, nommée UNE fois (corrigé le 14/10/2026 — le défaut « Test_86 » :
+   c'était une chaîne RECOPIÉE, et l'écriture de la page et la lecture de son 📂
+   avaient fini par ne plus dire la même chose). La copie de référence, l'import
+   des .pdb ET le 📂 emploient donc la MÊME constante. */
+eq((DOCKSRC.match(/const DOCKING_PDB_ARCHIVE_SUBSECTION = '([^']+)';/) || [])[1], 'pdb files',
+  '…la même sous-section que les .pdb importés — et elle n’est écrite qu’une fois');
+ok(DOCKSRC.includes('subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,'),
+  '…la copie de référence se range par cette constante');
+ok(DOCKSRC.includes("['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data'"),
+  '…et l’import des .pdb écrit par elle (aucune chaîne recopiée à côté)');
 ok(DOCKSRC.includes('stem: instance,'), 'le nom archivé est le nom DÉCLARÉ de l’instance');
 ok(DOCKSRC.includes('structures: Array.isArray(structures) ? structures : [],'),
   'l’archive porte les STRUCTURES (les textes PDB, qui vivent hors du document)');

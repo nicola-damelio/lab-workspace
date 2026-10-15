@@ -1,0 +1,496 @@
+diff --git a/src/App.jsx b/src/App.jsx
+index f1f4bbb..29666d4 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -45,6 +45,11 @@ import { repairBoxPlacements } from './utils/storageBoxes';
+    la taille du dataset (41–125 ms mesurés à chaque changement de `tests`). */
+ import { yieldToPaint, runInBackground } from './utils/backgroundWork';
+ import { deepSame } from './utils/deepSame';
++/* 🧵 LA COMPRESSION HORS DU FIL PRINCIPAL : `JSON.stringify` reste ici (72 ms
++   pour 6,2 Mo de JSON, mesuré), `LZString.compressToUTF16` (3 226 ms pour la
++   même charge) part dans un web worker — la page reste fluide (voir
++   utils/datasetCompression). */
++import { compressPayloadInBackground, compressPayloadSync } from './utils/datasetCompression';
+ 
+ import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
+ import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
+@@ -3874,11 +3879,22 @@ const describeProjectWriteRefusal = (restore) => (
+     : ''
+ );
+ 
+-const compressDatasetForSave = (raw) => {
+-  const compress = (data) => LZString.compressToUTF16(JSON.stringify(data));
+-  const sizeOf = (data) => compress(data).length * 3; // UTF-16 char -> max 3 UTF-8 bytes
++/* 🧵 LA COMPRESSION SORT DU FIL PRINCIPAL (voir utils/datasetCompression) : les
++   étapes ci-dessous mesurent la charge en la compressant — plusieurs fois — et
++   chacune gelait la page (0,9 s pour 6 Mo ; 3,8 s pour la seule passe LZString,
++   mesuré). Elle ne revient ici que pour le repli. `urgent` (fermeture d'onglet,
++   onglet qui passe en arrière-plan) garde le geste SYNCHRONE : il n'y a plus de
++   peinture à protéger, et une promesse n'aurait plus le temps d'aboutir quand
++   l'onglet disparaît — la dernière minute du travail ne doit pas dépendre d'un
++   aller-retour qui ne reviendra jamais. */
++const compressDatasetForSave = async (raw, urgent = false) => {
++  const compress = (data) => {
++    const json = JSON.stringify(data);
++    return urgent ? compressPayloadSync(json) : compressPayloadInBackground(json);
++  };
++  const sizeOf = async (data) => (await compress(data)).length * 3; // UTF-16 char -> max 3 UTF-8 bytes
+   const budget = 900000; // Firestore field limit is 1048487 bytes; stay well under.
+-  if (sizeOf(raw) <= budget) return compress(raw);
++  if ((await sizeOf(raw)) <= budget) return compress(raw);
+ 
+   // Stage 1: drop the heavy legacy chart images (mdNotebookCharts) that no
+   // longer belong in the dataset document — the MD notebook now renders its
+@@ -3893,7 +3909,7 @@ const compressDatasetForSave = (raw) => {
+       return clean;
+     })
+   };
+-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
++  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
+ 
+   // Stage 2: the serialized FCS payloads (fcParsed / fcExtraFiles[].data) are
+   // RECOVERABLE — the raw files are kept in the browser IndexedDB cache and in
+@@ -3901,7 +3917,7 @@ const compressDatasetForSave = (raw) => {
+   // (largest first) so small files keep their fast restore path.
+   {
+     let guard = 0;
+-    while (sizeOf(cleaned) > budget && guard < 40) {
++    while ((await sizeOf(cleaned)) > budget && guard < 40) {
+       guard++;
+       let best = null; // { testIndex, kind, extraIdx, size }
+       (cleaned.tests || []).forEach((test, ti) => {
+@@ -3926,14 +3942,14 @@ const compressDatasetForSave = (raw) => {
+       }
+     }
+   }
+-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
++  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
+ 
+   // Stage 3: iteratively drop the LARGEST base64 images embedded in notebook
+   // `comments` until the payload fits (a single image below 40 KB may still
+   // overflow when there are many of them). Each dropped image is replaced with
+   // a placeholder note, so no content is ever silently lost from the document.
+   let guard = 0;
+-  while (sizeOf(cleaned) > budget && guard < 40) {
++  while ((await sizeOf(cleaned)) > budget && guard < 40) {
+     guard++;
+     let target = null; // { testId, len, img }
+     cleaned.tests.forEach((test) => {
+@@ -3949,7 +3965,7 @@ const compressDatasetForSave = (raw) => {
+       return { ...test, comments: test.comments.replace(target.img, '<p style="color:#94a3b8;">[large image omitted from saved notebook — re-run the analysis to re-append]</p>') };
+     });
+   }
+-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
++  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
+ 
+   // Stage 4: cap the largest analysis arrays (MD time series). The notebook
+   // re-renders figures from data and the per-atom table already holds the
+@@ -3964,7 +3980,7 @@ const compressDatasetForSave = (raw) => {
+     }
+     return clean;
+   });
+-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
++  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
+ 
+   // Stage 5 (guarantee — the save must NEVER fail): iteratively drop the
+   // heaviest binary/data values left in ANY experiment page — long base64
+@@ -4030,7 +4046,7 @@ const compressDatasetForSave = (raw) => {
+   };
+   {
+     let guard = 0;
+-    while (sizeOf(cleaned) > budget && guard < 60) {
++    while ((await sizeOf(cleaned)) > budget && guard < 60) {
+       guard++;
+       let best = null;
+       (cleaned.tests || []).forEach((test, ti) => {
+@@ -4092,7 +4108,11 @@ useEffect(() => {
+          être effacé par cet enregistrement. */
+       rawData.tests = await guardDistantExperiments(rawData.tests);
+       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
+-      const compressedPayload = compressDatasetForSave(rawData);
++      /* 🧵 …et il ATTEND la charge, parce qu'elle arrive désormais d'un AUTRE
++         fil (voir utils/datasetCompression) : le fil principal, lui, n'a fait
++         que `JSON.stringify` (72 ms pour 6,2 Mo, mesuré) pendant que le worker
++         compresse. `urgent` = plus d'écran à protéger → tout se fait ici. */
++      const compressedPayload = await compressDatasetForSave(rawData, urgent);
+ 
+       const updatedPayload = {
+         title: datasetTitle || 'Untitled Dataset',
+@@ -4231,8 +4251,10 @@ useEffect(() => {
+       const writeTicket = takeWriteTicket(currentDatasetId);
+       try {
+         /* 🖐 La base d'administration se compresse aussi (tout son contenu d'un
+-           bloc) : elle attend la peinture de ce que l'utilisateur vient d'ouvrir
+-           (voir utils/backgroundWork). */
++           bloc) : elle attend la peinture de ce que l'utilisateur vient d'ouvrir,
++           PUIS la compression part dans un fil (voir utils/datasetCompression) —
++           le fil principal n'attend plus qu'une promesse (voir
++           utils/backgroundWork). */
+         await yieldToPaint();
+         const updatedPayload = {
+           kind: 'administration',
+@@ -4242,7 +4264,7 @@ useEffect(() => {
+           updatedAt: window.firebase
+             ? window.firebase.firestore.FieldValue.serverTimestamp()
+             : Date.now(),
+-          payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
++          payload: await compressPayloadInBackground(JSON.stringify({ administration: adminContent })),
+           isCompressed: true
+         };
+         if (!holdsLatestWriteTicket(currentDatasetId, writeTicket)) return;
+@@ -5311,7 +5333,12 @@ const saveLeavingDataset = (datasetId, isAdmin) => {
+          dataset est CELUI QU'ON VIENT DE QUITTER, et l'écran ne doit pas être
+          retouché : l'utilisateur regarde déjà autre chose. */
+       if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests, { datasetId, applyToScreen: false });
+-      const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);
++      /* 🧵 Comme la sauvegarde automatique : la charge part se compresser dans un
++         fil (voir utils/datasetCompression). La sortie d'un dataset reste
++         immédiate — c'est l'ARRIVÉE qui ne doit pas attendre, et elle n'attend
++         plus rien (le geste ci-dessus a rendu la main) : ce qui tournait ici sur
++         le fil principal, c'était 0,9 s pour 6 Mo, mesuré. */
++      const compressedPayload = isAdmin ? '' : await compressDatasetForSave(rawData);
+       
+       const updatedPayload = isAdmin
+         ? {
+@@ -5322,7 +5349,7 @@ const saveLeavingDataset = (datasetId, isAdmin) => {
+             updatedAt: window.firebase
+               ? window.firebase.firestore.FieldValue.serverTimestamp()
+               : Date.now(),
+-            payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() })),
++            payload: await compressPayloadInBackground(JSON.stringify({ administration: adminContent || createAdministrationSeed() })),
+             isCompressed: true
+           }
+         : {
+diff --git a/src/components/DockingSections.jsx b/src/components/DockingSections.jsx
+index 1f906b6..3d93ce8 100644
+--- a/src/components/DockingSections.jsx
++++ b/src/components/DockingSections.jsx
+@@ -6,6 +6,17 @@ import { DriveUploadButton } from './DriveUpload';
+ import { suggestDriveFileName } from '../utils/driveNaming';
+ import { getDriveToken, uploadLocalFile, extractDriveFileIds } from '../utils/driveUpload';
+ import { storeJson, loadJson } from '../utils/pdbStore';
++/* 📊 LA BARRE DU HAUT PENDANT LA RESTAURATION D'UN DOCKING, ET LA PAGE QUI RESTE
++   VIVANTE. Le rapport de cette session : « make the docking-experiment load bar
++   linear with the page scrollable during PDB loading ». Le nombre de fichiers
++   déclarés est connu d'avance (ils portent tous leur lien dans le dataset) : la
++   barre avance donc d'un fichier à l'autre au lieu de pulser, et entre deux
++   fichiers la restauration REND LA MAIN AU NAVIGATEUR (yieldToPaint) — la page se
++   peint et DÉFILE pendant qu'un dossier de 40 PDB descend du Drive. Le ⏹ de la
++   barre du haut l'arrête (abortControl). */
++import { loadProgress } from '../utils/loadProgress';
++import { abortControl } from '../utils/abortControl';
++import { yieldToPaint } from '../utils/backgroundWork';
+ import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
+ /* 🧬 LA SOURCE DE LA STRUCTURE DU VIEWER (voir utils/dockingStructureSrc.js) :
+    elle ne vient QUE du dataset — la page ne fabrique plus de protéine de
+@@ -55,12 +66,30 @@ import { tickTextProps, legendTextStyle, seriesColorFor } from '../utils/chartSt
+    (`<instance>_docking_restore.json.gz`) et le remet dans la base du
+    navigateur : le viewer 3D et « Molecules to be docked » fonctionnent. */
+ const DOCKING_RESTORE_KIND = 'docking';
++/* LA SOUS-SECTION D'ARCHIVE DES PDB DE CETTE PAGE — `Data/pdb files` : c'est
++   elle que l'import d'un répertoire de calcul écrit (voir `archive(…,
++   ['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data')` plus bas), donc c'est ELLE
++   que le 📂 « Topology from Drive folder » doit relire.
++
++   Défaut signalé (Test_86) : les modèles du cluster étaient bien dans
++   `projects/<projet>/Test_86/instance1/data/pdb_files` — écrits par cette page —
++   et le 📂 répondait pourtant « No .pdb / .ent / .cif file in this experiment's
++   Drive folders », en citant `…/data/Structure`, `…/data` et `…/data/Docking` :
++   la liste des branches lues ne contenait pas le dossier où la page ÉCRIT. Le
++   commentaire du geste (et la doc du 14/10) annonçaient déjà
++   « ctxs = …/Data/pdb files » — le code, lui, passait `Structure`.
++
++   UNE SEULE chaîne, écrite ET relue au même endroit : les deux ne peuvent plus
++   divergerer (le test `_docking_virgin_page_test.mjs` exige que l'écriture et la
++   lecture emploient cette constante, et que `pdb files` tombe bien sur
++   `pdb_files` — le dossier montré à l'utilisateur). */
++const DOCKING_PDB_ARCHIVE_SUBSECTION = 'pdb files';
+ const dockingDriveCtx = (test = {}, instance = '') => ({
+   project: (test.projectNames || [])[0] || '',
+   test: test.name || '',
+   scientist: test.operator || '',
+   section: 'Data',
+-  subsection: 'pdb files',
++  subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,
+   instance: instance || test.instanceName || ''
+ });
+ 
+@@ -473,6 +502,22 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+   };
+ 
+   const restoreDockingFromDrive = async () => {
++    /* ⏹📊 LA RESTAURATION SE RACONTE ET SE LAISSE ARRÊTER. Elle passe par
++       `loadProgress` (la barre du haut du navigateur, TestShellRenderer) et
++       s'enregistre dans `abortControl` : un dossier de 40 PDB se suit et
++       s'interrompt depuis un seul endroit, comme les chargements de structure du
++       viewer 3D. Le `try` couvre TOUT le corps (il y a plusieurs `return`) : le
++       ⏹ et la barre sont libérés par le `finally`, quel que soit le chemin. */
++    const rep = loadProgress.begin('docking structures');
++    let cancelled = false;
++    const unregister = abortControl.register('docking structures', () => { cancelled = true; });
++    rep.phase('Looking for the archived copy on Google Drive…');
++    /* …PEINDRE AVANT DE TRAVAILLER : l'archive d'un docking est un gros
++       `.json.gz` (téléchargement + gunzip + JSON.parse sur le fil principal).
++       Ce geste laisse la page s'afficher — et donc DÉFILER — avant que le
++       travail commence. */
++    await yieldToPaint();
++    try {
+     const pointer = activeTest.dockingDrive || null;
+     const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
+       ? pointer.stems
+@@ -486,6 +531,11 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+     const archivedMols = Array.isArray(data.molecules) ? data.molecules : [];
+     /* La base du navigateur est réapprovisionnée AVANT l'état : c'est elle que
+        le viewer 3D et « Molecules to be docked » relisent. */
++    if (archivedStructs.length || archivedMols.length) {
++      rep.phase('Saving the archived structures in this browser…');
++      // …le texte de la barre est peint AVANT le `JSON.stringify` du magasin.
++      await yieldToPaint();
++    }
+     if (archivedStructs.length) await storeJson(dockingStructKey, archivedStructs);
+     if (archivedMols.length) await storeJson(dockingMolKey, archivedMols);
+ 
+@@ -500,6 +550,9 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+        l'expérience DOIT montrer arrive toute seule, sans réimport manuel.
+        (Défaut rapporté : « some docking tests do not load automatically the
+        structure they are supposed to load. ») */
++    rep.phase('Reading the files already in this browser…');
++    // Le magasin du poste est relu (et PARSÉ) : on rend la main juste avant.
++    await yieldToPaint();
+     const local = await (async () => {
+       const s = await loadJson(dockingStructKey).catch(() => null);
+       const m = await loadJson(dockingMolKey).catch(() => null);
+@@ -508,14 +561,44 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+         molecules: Array.isArray(m) ? m : []
+       };
+     })();
++    rep.phase('Reading the file links declared by the dataset…');
+     const declared = await fetchDeclaredDockingFiles({
+-      test: activeTest, have: local, fetchText: downloadDeclaredDockingText
++      test: activeTest,
++      have: local,
++      fetchText: downloadDeclaredDockingText,
++      /* ⏹📊 LE COMPTEUR RÉEL, ET LA PAGE QUI RESTE VIVANTE : « File 3 of 12 —
++         cluster_3_model_1.pdb » et un pas de 1/12 PAR FICHIER (la barre est
++         LINÉAIRE, elle ne pulse plus), puis on REND LA MAIN AU NAVIGATEUR pour
++         que la page se peigne et se laisse défiler entre deux téléchargements.
++         Le rapporteur rend une promesse : la boucle du téléchargement l'attend
++         (voir utils/dockingDeclaredFiles.js). */
++      onProgress: async (done, total, phase) => {
++        rep.step(done, total, phase);
++        await yieldToPaint();
++      },
++      /* Le ⏹ de la barre du haut arrête la descente : ce qui est déjà arrivé
++         RESTE (la boucle s'interrompt, la suite range ce qu'elle a) — au lieu
++         d'un dossier entier à subir. */
++      isAborted: () => cancelled
+     });
+     const structs = [...local.structures, ...declared.structures];
+     const mols = [...local.molecules, ...declared.molecules];
++    if (structs.length || mols.length) {
++      rep.phase('Saving the structures in this browser…');
++      // Le `JSON.stringify` du magasin complet est la dernière grosse tâche
++      // synchrone : son texte est peint AVANT qu'elle commence.
++      await yieldToPaint();
++    }
+     if (structs.length) await storeJson(dockingStructKey, structs);
+     if (mols.length) await storeJson(dockingMolKey, mols);
+ 
++    /* ⏹ ARRÊTÉ PAR L'UTILISATEUR : on le DIT, et ce qui est déjà arrivé est
++       CONSERVÉ (les fichiers déjà rangés restent) — le message porte donc le
++       compte réel, jamais « tout est là ». */
++    const stoppedNote = cancelled
++      ? ` ⏹ Stopped after ${declared.fetched.length} file(s) — the ones already downloaded were kept.`
++      : '';
++
+     if (!structs.length && !mols.length) {
+       /* Rien dans l'archive ET rien de téléchargeable par les liens déclarés :
+          on le DIT, en nommant ce qui a échoué (les deux messages d'origine sont
+@@ -527,7 +610,7 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+         ok: false,
+         message: (found
+           ? `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.`
+-          : '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.') + failNote
++          : '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.') + failNote + stoppedNote
+       };
+     }
+     /* Les métadonnées sont touchées MÊME quand elles décrivent déjà ces
+@@ -558,10 +641,17 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
+     const source = found ? found.name : 'the file links declared by the dataset';
+     return {
+       ok: true,
+-      message: declared.fetched.length
++      message: (declared.fetched.length
+         ? `✅ Docking structures restored from Google Drive — ${declared.fetched.length} file(s) declared by the dataset${failNote}.`
+-        : `✅ Docking structures restored from Google Drive (${source})${failNote}.`
++        : `✅ Docking structures restored from Google Drive (${source})${failNote}.`) + stoppedNote
+     };
++    } finally {
++      /* La barre du haut et le ⏹ ne survivent JAMAIS à la restauration (même si
++         elle a levé) : le viewer 3D prend la main avec son propre rapporteur
++         (« structure loading »), et un ⏹ armé pour rien resterait sur la page. */
++      unregister();
++      rep.end();
++    }
+   };
+ 
+   const dockingRestore = useDriveAutoRestore({
+@@ -815,11 +905,18 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+      (« the topology from drive folder »). Le geste manquant est une LECTURE DU
+      DOSSIER : l'utilisateur VOIT ce que l'expérience contient et choisit.
+ 
+-     DEUX BRANCHES, LA CANONIQUE D'ABORD (`ctx` = `…/experiment_setup/Structure`,
++     TROIS BRANCHES, LA CANONIQUE D'ABORD (`ctx` = `…/experiment_setup/Structure`,
+      le dossier que 📁 « Create drive folder » FABRIQUE : le fichier qu'on vient y
+-     déposer à la main est vu en premier) ; puis ce que la page range elle-même
+-     (`ctxs` = `…/Data/pdb files`, le dossier de calcul importé, et
+-     `…/Data/Docking`, les envois du viewer 3D — voir `driveNaming` plus bas).
++     déposer à la main est vu en premier) ; puis ce que la page range ELLE-MÊME
++     (`ctxs`, dans cet ordre) :
++       • `…/Data/Structure` — la structure déposée / envoyée sous la section `Data` ;
++       • `…/Data/pdb files` — l'ARCHIVE des PDB de CETTE page, celui qu'elle écrit
++         à l'import d'un répertoire de calcul (`DOCKING_PDB_ARCHIVE_SUBSECTION`).
++         C'est le dossier du défaut signalé (Test_86) : il n'était pas lu, donc
++         les modèles du cluster étaient là, sous ses yeux, et le bouton répondait
++         « No .pdb file in this experiment's Drive folders ». Le dossier où la
++         page ÉCRIT est celui qu'elle RELIT — voir la constante plus haut ;
++       • `…/Data/Docking` — les envois du viewer 3D (sous-section `Docking`).
+ 
+      LE FICHIER CHOISI DEVIENT LA STRUCTURE DU CLUSTER : son texte entre dans la
+      base du navigateur sous la clé EXACTE que le viewer relit
+@@ -889,7 +986,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
+       label="📂 Topology from Drive folder"
+       titleText="List the .pdb / .cif / .mol2 files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's receptor. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
+       ctx={dockFolderCtx('Structure')}
+-      ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx('Docking', 'Data')]}
++      ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data'), dockFolderCtx('Docking', 'Data')]}
+       exts={DOCKING_TOPOLOGY_EXTS}
+       declaredName={selectedStruct ? selectedStruct.name : ''}
+       declaredNames={declaredStructureNames}
+@@ -1553,10 +1650,13 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
+     for (const s of structByName.values()) {
+       // Archive the DECOMPRESSED PDB to Drive under Data/pdb files — the viewer
+       // always reads the gunzipped text, and Drive also keeps usable .pdb files.
++      // La sous-section vient de la CONSTANTE (et non d'une chaîne recopiée) :
++      // le 📂 « Topology from Drive folder » lit celle-là même — un PDB importé
++      // ici est donc retrouvable par le bouton, ce qu'il n'était pas.
+       const driveUrl = await archive(
+         s.name, 'chemical/x-pdb',
+         s.blob || new Blob([s.pdb], { type: 'chemical/x-pdb' }),
+-        ['Data', 'pdb files'], 'Data'
++        ['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data'
+       );
+       structs.push({ name: s.name, pdb: s.pdb, driveUrl });
+     }
+diff --git a/src/components/NMRMoleculeViewer.jsx b/src/components/NMRMoleculeViewer.jsx
+index 17bf426..9519b50 100644
+--- a/src/components/NMRMoleculeViewer.jsx
++++ b/src/components/NMRMoleculeViewer.jsx
+@@ -1723,6 +1723,21 @@ const captureThemeGlobal = (setup) => {
+   const src = setup || {};
+   const out = {};
+   THEME_GLOBAL_KEYS.forEach((k) => { if (k in src) out[k] = src[k]; });
++  /* ⬚ UNE RAMPE ÉTEINTE NE VOYAGE PAS. Le rapport de cette session : « the 3D
++     viewer loses its gradient background after a style file loads — and there is
++     no way to restore it ». La cause est ici : la rampe ÉTEINTE est l'état PAR
++     DÉFAUT du viewer (BG_GRADIENT_DEFAULT_ON = false), donc « le fichier dit
++     on:false » et « le fichier ne dit RIEN de la rampe » sont indiscernables — un
++     style enregistré sans rampe ÉTEIGNAIT celle de l'écran, à chaque montage du
++     viewer (le rappel automatique d'une expérience, VIEWER_STYLE_RECALL_DELAY_MS),
++     et le geste semblait donc ne jamais tenir.
++     La règle est celle du module : un fond dégradé n'est jamais IMPOSÉ — il n'est
++     pas non plus jamais RETIRÉ par un fichier. Une figure enregistrée AVEC sa
++     rampe la ramène (la demande : « two colors and their direction ») ; une figure
++     enregistrée sans rampe laisse celle du poste TRANQUILLE, exactement comme un
++     fichier écrit avant cette fonctionnalité (applyViewerSetup ne touche alors
++     plus au dégradé du tout). Retirer le dégradé reste le geste de ⬚. */
++  if (out.backgroundGradient && !bgGradientOf(out.backgroundGradient).on) delete out.backgroundGradient;
+   return out;
+ };
+ // The environment alone, applied over what is on screen (the class styles are the
+@@ -23528,7 +23543,16 @@ useEffect(() => {
+ // applied over what is on screen; the class styles are the layer the two modes add
+ // on top. It is the very reader the ⚙️ setups use, so a file from another build is
+ // merged over the defaults and can never break the viewer.
+-const applyThemeGlobal = (global) => applyViewerSetup({ ...(global || {}), catStyles: (global && global.catStyles) || {} });
++const applyThemeGlobal = (global) => {
++  const src = { ...(global || {}) };
++  /* ⬚ …ET LE LECTEUR A LA MÊME RÈGLE QUE L'ÉCRIVAIN (voir captureThemeGlobal) :
++     un fichier DÉJÀ sur le Drive — écrit par la version qui enregistrait `on:false`,
++     ou par un build antérieur — ne doit pas non plus ÉTEINDRE la rampe de l'écran.
++     Un fichier n'apporte qu'une rampe ALLUMÉE ; c'est ce qui rend le défaut
++     réparable même pour les styles déjà enregistrés par l'utilisateur. */
++  if (src.backgroundGradient && !bgGradientOf(src.backgroundGradient).on) delete src.backgroundGradient;
++  return applyViewerSetup({ ...src, catStyles: src.catStyles || {} });
++};
+ // Every section on screen, grouped by MOLECULAR CLASS — the unit a THEME is keyed
+ // by (protein · nucleic acid · lipid · sugar · ligand · water · ion).
+ const sceneSectionsByClass = () => {
+diff --git a/src/utils/dockingDeclaredFiles.js b/src/utils/dockingDeclaredFiles.js
+index ba115dd..2bc94c8 100644
+--- a/src/utils/dockingDeclaredFiles.js
++++ b/src/utils/dockingDeclaredFiles.js
+@@ -117,13 +117,22 @@ export const missingDeclaredDockingFiles = ({ test = {}, structures = [], molecu
+  * (`{ name, pdb, driveUrl }` pour une structure, `{ …métadonnées, pdb }` pour
+  * une molécule) — la restauration n'a donc plus qu'à les stocker.
+  *
++ * ⚠ LE NOMBRE DE FICHIERS EST CONNU D'AVANCE (leurs liens sont dans le dataset) :
++ *   la boucle le DIT au lieu de laisser la barre du haut pulser sans repère — un
++ *   dossier de 40 PDB avance donc de 1/40 en 1/40 (voir utils/loadProgress.js).
++ *   Le rapporteur est APPELÉ ET ATTENDU : un appelant qui, dans le sien, rend la
++ *   main au navigateur (`yieldToPaint`, utils/backgroundWork.js) garde la page
++ *   PEINTE et DÉFILABLE pendant un long téléchargement.
++ *
+  * @param {object}   opts
+  * @param {object}   opts.test       l'expérience (métadonnées déclarées)
+  * @param {object}   opts.have       ce que ce poste a déjà : `{ structures, molecules }`
+  * @param {Function} opts.fetchText  async (file) => texte PDB ('' / throw = échec)
++ * @param {Function} [opts.onProgress] async (done, total, phase) — APRÈS chaque fichier
++ * @param {Function} [opts.isAborted]  () => boolean — consulté AVANT chaque fichier
+  * @returns {{ structures: Array, molecules: Array, fetched: string[], failed: string[] }}
+  */
+-export const fetchDeclaredDockingFiles = async ({ test = {}, have = {}, fetchText } = {}) => {
++export const fetchDeclaredDockingFiles = async ({ test = {}, have = {}, fetchText, onProgress, isAborted } = {}) => {
+   const out = { structures: [], molecules: [], fetched: [], failed: [] };
+   if (typeof fetchText !== 'function') return out;
+   const missing = missingDeclaredDockingFiles({
+@@ -131,16 +140,36 @@ export const fetchDeclaredDockingFiles = async ({ test = {}, have = {}, fetchTex
+     structures: have && have.structures,
+     molecules: have && have.molecules
+   });
++  const total = missing.length;
++  /* ⏹ ARRÊTER UNE DESCENTE DE 40 FICHIERS. Le drapeau appartient à l'appelant
++     (le ⏹ de la barre du haut, voir abortControl) : ici on ne fait que le
++     consulter, et ce qui est DÉJÀ arrivé reste — la boucle s'interrompt, la
++     page range ce qu'elle a. */
++  const stopped = () => typeof isAborted === 'function' && !!isAborted();
++  const report = async (done, phase) => {
++    if (typeof onProgress !== 'function') return;
++    // Un rapporteur qui échoue ne fait pas échouer la restauration.
++    try { await onProgress(done, total, phase); } catch { /* le rapport est un confort */ }
++  };
++  const phaseOf = (i) => (i < total ? `File ${i + 1} of ${total} — ${missing[i].name}` : '');
++  if (stopped()) return out;
++  await report(0, phaseOf(0));
++  let done = 0;
+   for (const file of missing) {
++    if (stopped()) break;
+     let text = '';
+     try { text = String((await fetchText(file)) || ''); } catch { text = ''; }
+-    if (!text.trim()) { out.failed.push(file.name); continue; }
+-    if (file.kind === 'molecule') {
++    if (!text.trim()) {
++      out.failed.push(file.name);
++    } else if (file.kind === 'molecule') {
+       out.molecules.push({ ...(file.meta || {}), name: file.name, driveUrl: file.url, hasPdb: true, pdb: text });
+     } else {
+       out.structures.push({ name: file.name, pdb: text, driveUrl: file.url });
+     }
+-    out.fetched.push(file.name);
++    if (text.trim()) out.fetched.push(file.name);
++    done += 1;
++    // Le compteur vient d'avancer : la barre le dit, et la page peut peindre.
++    await report(done, phaseOf(done));
+   }
+   return out;
+ };

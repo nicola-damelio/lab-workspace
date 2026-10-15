@@ -707,6 +707,8 @@ eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image
 eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
 
 
+
+
 /* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
 /* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
    des rangées nucléiques sont des représentations que NGL réécrit à chaque image

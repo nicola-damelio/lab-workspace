@@ -84,7 +84,10 @@ has(LEAVER, '(async () => {', '…le travail continue dans sa propre promesse (p
 const atRawData = LEAVER.indexOf('const rawData = isAdmin ? null : { ...latestDataRef.current, ...cloudProjectsPayload() };');
 const atLock = LEAVER.indexOf('if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);');
 const atYield = LEAVER.indexOf('await new Promise((resolve) => { setTimeout(resolve, 0); });');
-const atCompress = LEAVER.indexOf("const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);");
+/* La compression a quitté le fil principal (voir utils/datasetCompression) : le
+   geste reste le même, il est simplement attendu — et il arrive toujours APRÈS
+   le rendu de main ci-dessus. */
+const atCompress = LEAVER.indexOf("const compressedPayload = isAdmin ? '' : await compressDatasetForSave(rawData);");
 ok(atRawData > 0 && atRawData < atYield,
   'l’instantané (mémoire + projets) est pris AVANT le premier await : c’est l’état du CLIC');
 ok(atLock > 0 && atLock < atYield,

@@ -246,8 +246,8 @@ eq(count(DOCK, 'fileRowExtra={dockFileRowExtra}'), 1,
   '[Docking] la page passe SON 📂 (et son mot) au viewer, sur la ligne de 📁 Create drive folder');
 has(DOCK, 'const dockTopologyFromFolder = (', '[Docking] …défini une seule fois, avant le rendu de la page');
 has(DOCK, 'label="📂 Topology from Drive folder"', '[Docking] …c’est le 📂 « Topology from Drive folder »');
-ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?ctx=\{dockFolderCtx\('Structure'\)\}[\s\S]{0,1200}?ctxs=\{\[dockFolderCtx\('Structure', 'Data'\), dockFolderCtx\('Docking', 'Data'\)\]\}[\s\S]{0,1200}?exts=\{DOCKING_TOPOLOGY_EXTS\}[\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(DOCK),
-  '[Docking] …le dossier canonique d’abord (celui de 📁 Create drive folder), puis les deux branches de la page (le dossier de calcul · les envois du viewer 3D)');
+ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?ctx=\{dockFolderCtx\('Structure'\)\}[\s\S]{0,1200}?ctxs=\{\[dockFolderCtx\('Structure', 'Data'\), dockFolderCtx\(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data'\), dockFolderCtx\('Docking', 'Data'\)\]\}[\s\S]{0,1200}?exts=\{DOCKING_TOPOLOGY_EXTS\}[\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(DOCK),
+  '[Docking] …le dossier canonique d’abord (celui de 📁 Create drive folder), puis les trois branches de la page (Data/Structure · l’archive Data/pdb files, où la page ÉCRIT · les envois du viewer 3D)');
 eq(count(DOCK, '<DriveExperimentFilePicker'), 1,
   '[Docking] …un seul 📂 : cette page n’a qu’un fichier à lire dans le dossier');
 has(DOCK, 'declaredNames={declaredStructureNames}',

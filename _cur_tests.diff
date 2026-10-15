@@ -1,0 +1,205 @@
+diff --git a/_background_save_test.mjs b/_background_save_test.mjs
+index a89212d..ff0ba7a 100644
+--- a/_background_save_test.mjs
++++ b/_background_save_test.mjs
+@@ -84,7 +84,10 @@ has(LEAVER, '(async () => {', '…le travail continue dans sa propre promesse (p
+ const atRawData = LEAVER.indexOf('const rawData = isAdmin ? null : { ...latestDataRef.current, ...cloudProjectsPayload() };');
+ const atLock = LEAVER.indexOf('if (!isAdmin) rawData.tests = guardExperimentsForWrite(rawData.tests);');
+ const atYield = LEAVER.indexOf('await new Promise((resolve) => { setTimeout(resolve, 0); });');
+-const atCompress = LEAVER.indexOf("const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);");
++/* La compression a quitté le fil principal (voir utils/datasetCompression) : le
++   geste reste le même, il est simplement attendu — et il arrive toujours APRÈS
++   le rendu de main ci-dessus. */
++const atCompress = LEAVER.indexOf("const compressedPayload = isAdmin ? '' : await compressDatasetForSave(rawData);");
+ ok(atRawData > 0 && atRawData < atYield,
+   'l’instantané (mémoire + projets) est pris AVANT le premier await : c’est l’état du CLIC');
+ ok(atLock > 0 && atLock < atYield,
+diff --git a/_docking_virgin_page_test.mjs b/_docking_virgin_page_test.mjs
+index 44086f4..879ce5f 100644
+--- a/_docking_virgin_page_test.mjs
++++ b/_docking_virgin_page_test.mjs
+@@ -25,12 +25,23 @@
+         importé le dossier de calcul, et sans elle un import ancien restait sans
+         la structure qu'il devait montrer.
+ 
++   …ET le §6 bis (le défaut « Test_86 » du 14/10) : le 📂 « Topology from Drive
++   folder » doit lire le dossier où la page ÉCRIT (`Data/pdb files`, slugué
++   `pdb_files`). Il ne le lisait pas : un PDB importé par la page elle-même
++   restait introuvable pour son propre bouton, qui répondait « No .pdb … file in
++   this experiment's Drive folders » en citant `…/data/Structure`, `…/data` et
++   `…/data/Docking`.
++
+    Les modules sont IMPORTÉS pour de vrai (ils sont purs) ; le JSX est vérifié
+    par analyse de source, comme _docking_viewer_restore_test.mjs.
+    ========================================================================= */
+ import assert from 'node:assert/strict';
+ import { readFileSync } from 'node:fs';
+ import { dockingStructureSrcOf, isDirectStructureSrc, rcsbModelUrl, PDB_CODE_RE } from './src/utils/dockingStructureSrc.js';
++/* La RÈGLE DE CHEMIN de l'application, importée pour de vrai : le §6 bis vérifie
++   que la sous-section d'archive du 📂 (`pdb files`) EST bien le dossier
++   `data/pdb_files` du Drive — le chemin du défaut signalé. */
++import { canonicalExperimentPath } from './src/utils/driveNaming.js';
+ import { DOCKING_TOPOLOGY_EXTS, declaredDockingFiles, dockingTopologyExt, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from './src/utils/dockingDeclaredFiles.js';
+ 
+ let passed = 0;
+@@ -212,8 +223,33 @@ eq(dockingTopologyExt(''), 'pdb', 'un nom vide aussi — jamais d’extension in
+ ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(SRC),
+   'la page a UN 📂 « Topology from Drive folder », qui installe le fichier choisi');
+ ok(SRC.includes("ctx={dockFolderCtx('Structure')}")
+-  && SRC.includes("ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx('Docking', 'Data')]}"),
++  && SRC.includes("ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data'), dockFolderCtx('Docking', 'Data')]}"),
+   '…le dossier canonique (celui que 📁 Create drive folder fabrique) D’ABORD, puis les branches de la page');
++
++/* ── 6 bis. LE DOSSIER OÙ LA PAGE ÉCRIT EST CELUI QU’ELLE RELIT ────────────
++   Défaut signalé (Test_86) : « in test_86 I don’t see its pdb, and “topology from
++   drive folder” says: No .pdb / .ent / .cif / .mmcif / .mol2 / .sdf file in this
++   experiment's Drive folders — checked: …/experiment_setup/Structure ·
++   …/experiment_setup · …/instance1 · …/Test_86 · …/data/Structure · …/data ·
++   …/data/Docking ». Les modèles du cluster étaient pourtant dans
++   `…/instance1/data/pdb_files` — le dossier que CETTE page ÉCRIT à l’import d’un
++   répertoire de calcul (sous-section `pdb files`, sluguée `pdb_files`) : il ne
++   figurait pas dans les branches lues, donc le bouton annonçait « rien » là où
++   la page elle-même venait de déposer les fichiers.
++   Les deux gestes emploient donc UNE SEULE constante, et le chemin qui en découle
++   est vérifié par le constructeur de chemin de l’application (jamais recopié). */
++const ARCHIVE_SECTION = (SRC.match(/const DOCKING_PDB_ARCHIVE_SUBSECTION = '([^']+)';/) || [])[1];
++eq(ARCHIVE_SECTION, 'pdb files',
++  'la sous-section d’archive des PDB est nommée UNE fois — le nom que l’import emploie depuis toujours');
++ok(/archive\(\s*s\.name,[\s\S]{0,240}?\['Data', DOCKING_PDB_ARCHIVE_SUBSECTION\],\s*'Data'\s*\)/.test(SRC),
++  '…l’import du répertoire de calcul ÉCRIT les PDB par cette constante');
++ok(/subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,/.test(SRC),
++  '…la copie de référence rangée à côté (dockingDriveCtx) aussi');
++ok(SRC.includes("dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data')"),
++  '…et le 📂 LIT ce dossier-là : le dossier où la page écrit est celui qu’elle relit');
++eq(canonicalExperimentPath({ project: 'P', test: 'Test_86', instance: 'instance1', section: 'Data', subsection: ARCHIVE_SECTION }),
++  ['projects', 'P', 'Test_86', 'instance1', 'data', 'pdb_files'],
++  '…et ce dossier est bien `data/pdb_files` sur le Drive (le chemin exact du défaut signalé)');
+ ok(SRC.includes('storeJson(structKey, next)')
+   && SRC.includes("dockingStructures: next.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' }))"),
+   'le fichier choisi est rangé là où le viewer relit, et les métadonnées sont touchées (structList se réveille)');
+diff --git a/_drive_restore_test.mjs b/_drive_restore_test.mjs
+index d31e580..8730f0e 100644
+--- a/_drive_restore_test.mjs
++++ b/_drive_restore_test.mjs
+@@ -382,7 +382,16 @@ ok(DOCKSRC.includes("import { useDriveAutoRestore } from './useDriveAutoRestore'
+ ok(DOCKSRC.includes("const DOCKING_RESTORE_KIND = 'docking';"), 'le type de donnée docking est déclaré une fois');
+ ok(DOCKSRC.includes("const dockingDriveCtx = (test = {}, instance = '') => ({"),
+   'le dossier d’archive est le dossier canonique de l’instance');
+-ok(/subsection: 'pdb files'/.test(DOCKSRC), '…la même sous-section que les .pdb importés');
++/* LA SOUS-SECTION, nommée UNE fois (corrigé le 14/10/2026 — le défaut « Test_86 » :
++   c'était une chaîne RECOPIÉE, et l'écriture de la page et la lecture de son 📂
++   avaient fini par ne plus dire la même chose). La copie de référence, l'import
++   des .pdb ET le 📂 emploient donc la MÊME constante. */
++eq((DOCKSRC.match(/const DOCKING_PDB_ARCHIVE_SUBSECTION = '([^']+)';/) || [])[1], 'pdb files',
++  '…la même sous-section que les .pdb importés — et elle n’est écrite qu’une fois');
++ok(DOCKSRC.includes('subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,'),
++  '…la copie de référence se range par cette constante');
++ok(DOCKSRC.includes("['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data'"),
++  '…et l’import des .pdb écrit par elle (aucune chaîne recopiée à côté)');
+ ok(DOCKSRC.includes('stem: instance,'), 'le nom archivé est le nom DÉCLARÉ de l’instance');
+ ok(DOCKSRC.includes('structures: Array.isArray(structures) ? structures : [],'),
+   'l’archive porte les STRUCTURES (les textes PDB, qui vivent hors du document)');
+diff --git a/_save_in_background_test.mjs b/_save_in_background_test.mjs
+index 70a05af..5be1639 100644
+--- a/_save_in_background_test.mjs
++++ b/_save_in_background_test.mjs
+@@ -233,7 +233,7 @@ ok(!sameByJson({ a: 1, b: 2 }, { b: 2, a: 1 }), '…là où JSON.stringify, lui,
+   ok(atSave > 0, 'l’enregistrement automatique dit s’il est URGENT ou d’arrière-plan');
+   const SAVE = APP.slice(atSave, atEffectEnd);
+   const atYield = SAVE.indexOf('if (!urgent) await yieldToPaint();');
+-  const atCompress = SAVE.indexOf('compressDatasetForSave(rawData)');
++  const atCompress = SAVE.indexOf('await compressDatasetForSave(rawData');
+   const atPublish = SAVE.indexOf('publishDatasetStructure({');
+   ok(atYield > 0, 'il rend la main quand il n’est pas urgent');
+   ok(atCompress > atYield, '…AVANT la compression (884 ms pour 6 Mo : mesuré)');
+diff --git a/_structure_windows_test.mjs b/_structure_windows_test.mjs
+index 5a6a9cc..f0da5f6 100644
+--- a/_structure_windows_test.mjs
++++ b/_structure_windows_test.mjs
+@@ -246,8 +246,8 @@ eq(count(DOCK, 'fileRowExtra={dockFileRowExtra}'), 1,
+   '[Docking] la page passe SON 📂 (et son mot) au viewer, sur la ligne de 📁 Create drive folder');
+ has(DOCK, 'const dockTopologyFromFolder = (', '[Docking] …défini une seule fois, avant le rendu de la page');
+ has(DOCK, 'label="📂 Topology from Drive folder"', '[Docking] …c’est le 📂 « Topology from Drive folder »');
+-ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?ctx=\{dockFolderCtx\('Structure'\)\}[\s\S]{0,1200}?ctxs=\{\[dockFolderCtx\('Structure', 'Data'\), dockFolderCtx\('Docking', 'Data'\)\]\}[\s\S]{0,1200}?exts=\{DOCKING_TOPOLOGY_EXTS\}[\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(DOCK),
+-  '[Docking] …le dossier canonique d’abord (celui de 📁 Create drive folder), puis les deux branches de la page (le dossier de calcul · les envois du viewer 3D)');
++ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?ctx=\{dockFolderCtx\('Structure'\)\}[\s\S]{0,1200}?ctxs=\{\[dockFolderCtx\('Structure', 'Data'\), dockFolderCtx\(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data'\), dockFolderCtx\('Docking', 'Data'\)\]\}[\s\S]{0,1200}?exts=\{DOCKING_TOPOLOGY_EXTS\}[\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(DOCK),
++  '[Docking] …le dossier canonique d’abord (celui de 📁 Create drive folder), puis les trois branches de la page (Data/Structure · l’archive Data/pdb files, où la page ÉCRIT · les envois du viewer 3D)');
+ eq(count(DOCK, '<DriveExperimentFilePicker'), 1,
+   '[Docking] …un seul 📂 : cette page n’a qu’un fichier à lire dans le dossier');
+ has(DOCK, 'declaredNames={declaredStructureNames}',
+diff --git a/_viewer_rings_gradient_test.mjs b/_viewer_rings_gradient_test.mjs
+index 18da315..8e8d5af 100644
+--- a/_viewer_rings_gradient_test.mjs
++++ b/_viewer_rings_gradient_test.mjs
+@@ -707,6 +707,7 @@ eq(HF.refreshRingPlates([fakeComp]), 1, '…jusqu’à ce que la prochaine image
+ eq(screenPos(), before, '…et la voilà reposée sur les atomes de l’image 1');
+ 
+ 
++
+ /* ══ 9. LES PLAQUES SUIVENT LES IMAGES DE LA TRAJECTOIRE ═══════════════════ */
+ /* LA PANNE signalée (« le immagini scorrono ma le placche restano ») : les bâtons
+    des rangées nucléiques sont des représentations que NGL réécrit à chaque image
+diff --git a/_viewer_theme_snapshot_test.mjs b/_viewer_theme_snapshot_test.mjs
+index c8e54ec..d1cb897 100644
+--- a/_viewer_theme_snapshot_test.mjs
++++ b/_viewer_theme_snapshot_test.mjs
+@@ -23,6 +23,12 @@
+    ========================================================================= */
+ import assert from 'node:assert/strict';
+ import { readFileSync } from 'node:fs';
++/* ⬚ LE VALIDATEUR DE LA RAMPE DU FOND (utils/viewerBackground) : `captureThemeGlobal`
++   lui pose UNE question — « la rampe de ce fichier est-elle ALLUMÉE ? » — parce
++   qu'une rampe ÉTEINTE ne voyage pas (voir la source). C'est le VRAI module, jamais
++   une doublure : la règle du garde-fou est EXÉCUTÉE, comme celle de
++   _viewer_background_test.mjs, et non recopiée à la main. */
++import { bgGradientOf } from './src/utils/viewerBackground.js';
+ 
+ let passed = 0;
+ const ok = (cond, what) => {
+@@ -93,7 +99,9 @@ const fakeLocalStorage = {
+   getItem: (k) => (store.has(k) ? store.get(k) : null),
+   setItem: (k, v) => { store.set(k, String(v)); },
+ };
+-const H = new Function('__ls', sandbox.replace(/\blocalStorage\b/g, '__ls'))(fakeLocalStorage);
++// `bgGradientOf` entre dans le banc par la PORTE (un paramètre) : le corps découpé
++// appelle le module réel sans qu'aucune doublure ne soit écrite ici.
++const H = new Function('__ls', 'bgGradientOf', sandbox.replace(/\blocalStorage\b/g, '__ls'))(fakeLocalStorage, bgGradientOf);
+ 
+ /* ══ 1. LES DEUX MAGASINS SONT SÉPARÉS ════════════════════════════════════ */
+ eq(H.VIEWER_THEME_KEY, 'labViewerThemes', 'le thème a son propre magasin');
+@@ -148,6 +156,25 @@ ok(glob.fog === true && glob.background === '#101010' && glob.clip && glob.shado
+   'la capture garde la scène : brouillard · fond · clipping · ombres');
+ ok(glob.backgroundGradient && glob.backgroundGradient.on === true && glob.backgroundGradient.to === '#202020',
+   '…et la RAMPE du fond (⬚ sa seconde couleur, son angle et son interrupteur), qui prolonge cette couleur');
++/* ⬚ UNE RAMPE ÉTEINTE NE VOYAGE PAS — le défaut de cette session : « the 3D viewer
++   loses its gradient background after a style file loads — and there is no way to
++   restore it ». La rampe éteinte étant l'état PAR DÉFAUT du viewer, « le fichier dit
++   on:false » et « le fichier ne dit RIEN de la rampe » étaient indiscernables : un
++   style enregistré SANS rampe ÉTEIGNAIT celle de l'écran, à chaque rappel automatique
++   (VIEWER_STYLE_RECALL_DELAY_MS), et le geste semblait ne jamais tenir. Les trois
++   formes sont EXÉCUTÉES ici : seule la figure enregistrée AVEC sa rampe la ramène. */
++const rampOffExplicit = H.captureThemeGlobal({
++  ...setup, backgroundGradient: { on: false, to: '#202020', angle: 90 },
++});
++ok(!('backgroundGradient' in rampOffExplicit),
++  'une rampe `on:false` n’est PAS capturée : le fichier laisse la rampe de l’écran TRANQUILLE');
++const rampSilent = H.captureThemeGlobal({ ...setup, backgroundGradient: { to: '#202020', angle: 90 } });
++ok(!('backgroundGradient' in rampSilent),
++  '…et un fichier qui ne dit RIEN de la rampe (un style écrit avant cette règle) non plus');
++has('if (src.backgroundGradient && !bgGradientOf(src.backgroundGradient).on) delete src.backgroundGradient;',
++  '…le LECTEUR (applyThemeGlobal) suit la même règle que l’ÉCRIVAIN : un fichier DÉJÀ sur le Drive se répare donc tout seul');
++eq(countOf(/!bgGradientOf\(/g), 2,
++  'la règle est écrite UNE fois de chaque côté (capture + lecture du ⚙️ setup), jamais dupliquée');
+ ok(glob.generalLook && glob.palettes && glob.sstrucColors && glob.catStyles,
+   '…et la roue ⚙ (palettes + look général), les couleurs de 2°-structure et les menus');
+ ok(glob.ray && glob.esp,
+@@ -155,7 +182,8 @@ ok(glob.ray && glob.esp,
+ eq(Object.keys(glob).sort(), [...H.THEME_GLOBAL_KEYS].sort(),
+   'RIEN d’autre : ni la version, ni la date, ni un champ inconnu');
+ ok(!('savedAt' in glob) && !('v' in glob), '…en particulier pas les métadonnées du fichier');
+-has('const applyThemeGlobal = (global) => applyViewerSetup(', 'l’environnement est relu par le LECTEUR des ⚙️ setups');
++has('return applyViewerSetup({ ...src, catStyles: src.catStyles || {} });',
++  'l’environnement est relu par le LECTEUR des ⚙️ setups');
+ ok(VIEW.indexOf('const applyThemeGlobal = (global)') > VIEW.indexOf('const applyViewerSetup = (s) => {'),
+   '…et il est défini APRÈS applyViewerSetup : au niveau module il ne l’aurait pas vu');
+ eq(countOf(/const applyThemeGlobal = /g), 1, 'une seule définition (aucune copie au niveau module)');

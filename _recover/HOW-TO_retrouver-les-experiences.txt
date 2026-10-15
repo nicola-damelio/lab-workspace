@@ -1,22 +1,15 @@
 RETROUVER LES EXPÉRIENCES PERDUES — LE GESTE, EN CLAIR
 =====================================================
 
-Fichier à charger : GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-13.json
+Fichier à charger : GEC-UPJV-projects_774488_experiences-retrouvees_2026-10-15.json
   (dossier _recover/ — il est LOCAL, rien n’a été écrit sur le Drive)
 
-Ce qu’il porte : 12 expérience(s), avec leurs ids d’origine —
-   • « pdb_Bad_BCL-XL »  (id t17915013096201399)
-   • « pdb_Bcl-XL_Bid »  (id t17915001326217901)
-   • « pdb_CDK2_CyclinA »  (id t17915016474816788)
-   • « pdb_Mdm2_p53 »  (id t17914952328471224)
-   • « pdb_PD1_PDL1 »  (id t17915023284364463)
-   • « Test 84 »  (id t17918099728805139)
-   • « Test 85 »  (id t17915002806849126)
-   • « Test 85 »  (id t1791811075020906)
-   • « Test 86 »  (id t17918122680048458)
-   • « Test 89 »  (id t17917933668194158)
-   • « Test 90 »  (id t17917966358606832)
-   • « Test 91 »  (id t17917988902732120)
+Ce qu’il porte : 5 expérience(s), avec leurs ids d’origine —
+   • « Pd1 »  (id t17915023284364463)
+   • « pdb »  (id t17915001326217901)
+   • « pdb_ »  (id t17915016474816788)
+   • « pdb_BadH »  (id t17915013096201399)
+   • « Test 82 »  (id t17912925988435618)
 
 DANS L’APPLICATION :
    1. OUVRIR le dataset « GEC-UPJV-projects » : l’import en AJOUT écrit dans

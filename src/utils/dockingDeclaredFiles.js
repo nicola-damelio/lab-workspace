@@ -117,13 +117,22 @@ export const missingDeclaredDockingFiles = ({ test = {}, structures = [], molecu
  * (`{ name, pdb, driveUrl }` pour une structure, `{ …métadonnées, pdb }` pour
  * une molécule) — la restauration n'a donc plus qu'à les stocker.
  *
+ * ⚠ LE NOMBRE DE FICHIERS EST CONNU D'AVANCE (leurs liens sont dans le dataset) :
+ *   la boucle le DIT au lieu de laisser la barre du haut pulser sans repère — un
+ *   dossier de 40 PDB avance donc de 1/40 en 1/40 (voir utils/loadProgress.js).
+ *   Le rapporteur est APPELÉ ET ATTENDU : un appelant qui, dans le sien, rend la
+ *   main au navigateur (`yieldToPaint`, utils/backgroundWork.js) garde la page
+ *   PEINTE et DÉFILABLE pendant un long téléchargement.
+ *
  * @param {object}   opts
  * @param {object}   opts.test       l'expérience (métadonnées déclarées)
  * @param {object}   opts.have       ce que ce poste a déjà : `{ structures, molecules }`
  * @param {Function} opts.fetchText  async (file) => texte PDB ('' / throw = échec)
+ * @param {Function} [opts.onProgress] async (done, total, phase) — APRÈS chaque fichier
+ * @param {Function} [opts.isAborted]  () => boolean — consulté AVANT chaque fichier
  * @returns {{ structures: Array, molecules: Array, fetched: string[], failed: string[] }}
  */
-export const fetchDeclaredDockingFiles = async ({ test = {}, have = {}, fetchText } = {}) => {
+export const fetchDeclaredDockingFiles = async ({ test = {}, have = {}, fetchText, onProgress, isAborted } = {}) => {
   const out = { structures: [], molecules: [], fetched: [], failed: [] };
   if (typeof fetchText !== 'function') return out;
   const missing = missingDeclaredDockingFiles({
@@ -131,16 +140,36 @@ export const fetchDeclaredDockingFiles = async ({ test = {}, have = {}, fetchTex
     structures: have && have.structures,
     molecules: have && have.molecules
   });
+  const total = missing.length;
+  /* ⏹ ARRÊTER UNE DESCENTE DE 40 FICHIERS. Le drapeau appartient à l'appelant
+     (le ⏹ de la barre du haut, voir abortControl) : ici on ne fait que le
+     consulter, et ce qui est DÉJÀ arrivé reste — la boucle s'interrompt, la
+     page range ce qu'elle a. */
+  const stopped = () => typeof isAborted === 'function' && !!isAborted();
+  const report = async (done, phase) => {
+    if (typeof onProgress !== 'function') return;
+    // Un rapporteur qui échoue ne fait pas échouer la restauration.
+    try { await onProgress(done, total, phase); } catch { /* le rapport est un confort */ }
+  };
+  const phaseOf = (i) => (i < total ? `File ${i + 1} of ${total} — ${missing[i].name}` : '');
+  if (stopped()) return out;
+  await report(0, phaseOf(0));
+  let done = 0;
   for (const file of missing) {
+    if (stopped()) break;
     let text = '';
     try { text = String((await fetchText(file)) || ''); } catch { text = ''; }
-    if (!text.trim()) { out.failed.push(file.name); continue; }
-    if (file.kind === 'molecule') {
+    if (!text.trim()) {
+      out.failed.push(file.name);
+    } else if (file.kind === 'molecule') {
       out.molecules.push({ ...(file.meta || {}), name: file.name, driveUrl: file.url, hasPdb: true, pdb: text });
     } else {
       out.structures.push({ name: file.name, pdb: text, driveUrl: file.url });
     }
-    out.fetched.push(file.name);
+    if (text.trim()) out.fetched.push(file.name);
+    done += 1;
+    // Le compteur vient d'avancer : la barre le dit, et la page peut peindre.
+    await report(done, phaseOf(done));
   }
   return out;
 };

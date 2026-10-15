@@ -6,6 +6,17 @@ import { DriveUploadButton } from './DriveUpload';
 import { suggestDriveFileName } from '../utils/driveNaming';
 import { getDriveToken, uploadLocalFile, extractDriveFileIds } from '../utils/driveUpload';
 import { storeJson, loadJson } from '../utils/pdbStore';
+/* 📊 LA BARRE DU HAUT PENDANT LA RESTAURATION D'UN DOCKING, ET LA PAGE QUI RESTE
+   VIVANTE. Le rapport de cette session : « make the docking-experiment load bar
+   linear with the page scrollable during PDB loading ». Le nombre de fichiers
+   déclarés est connu d'avance (ils portent tous leur lien dans le dataset) : la
+   barre avance donc d'un fichier à l'autre au lieu de pulser, et entre deux
+   fichiers la restauration REND LA MAIN AU NAVIGATEUR (yieldToPaint) — la page se
+   peint et DÉFILE pendant qu'un dossier de 40 PDB descend du Drive. Le ⏹ de la
+   barre du haut l'arrête (abortControl). */
+import { loadProgress } from '../utils/loadProgress';
+import { abortControl } from '../utils/abortControl';
+import { yieldToPaint } from '../utils/backgroundWork';
 import { archiveRestoreJson, downloadCloudFile, placeRestorePointer, restoreJsonFor, restoreStems, takePendingRestorePointer } from '../utils/driveRestore';
 /* 🧬 LA SOURCE DE LA STRUCTURE DU VIEWER (voir utils/dockingStructureSrc.js) :
    elle ne vient QUE du dataset — la page ne fabrique plus de protéine de
@@ -55,12 +66,30 @@ import { tickTextProps, legendTextStyle, seriesColorFor } from '../utils/chartSt
    (`<instance>_docking_restore.json.gz`) et le remet dans la base du
    navigateur : le viewer 3D et « Molecules to be docked » fonctionnent. */
 const DOCKING_RESTORE_KIND = 'docking';
+/* LA SOUS-SECTION D'ARCHIVE DES PDB DE CETTE PAGE — `Data/pdb files` : c'est
+   elle que l'import d'un répertoire de calcul écrit (voir `archive(…,
+   ['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data')` plus bas), donc c'est ELLE
+   que le 📂 « Topology from Drive folder » doit relire.
+
+   Défaut signalé (Test_86) : les modèles du cluster étaient bien dans
+   `projects/<projet>/Test_86/instance1/data/pdb_files` — écrits par cette page —
+   et le 📂 répondait pourtant « No .pdb / .ent / .cif file in this experiment's
+   Drive folders », en citant `…/data/Structure`, `…/data` et `…/data/Docking` :
+   la liste des branches lues ne contenait pas le dossier où la page ÉCRIT. Le
+   commentaire du geste (et la doc du 14/10) annonçaient déjà
+   « ctxs = …/Data/pdb files » — le code, lui, passait `Structure`.
+
+   UNE SEULE chaîne, écrite ET relue au même endroit : les deux ne peuvent plus
+   divergerer (le test `_docking_virgin_page_test.mjs` exige que l'écriture et la
+   lecture emploient cette constante, et que `pdb files` tombe bien sur
+   `pdb_files` — le dossier montré à l'utilisateur). */
+const DOCKING_PDB_ARCHIVE_SUBSECTION = 'pdb files';
 const dockingDriveCtx = (test = {}, instance = '') => ({
   project: (test.projectNames || [])[0] || '',
   test: test.name || '',
   scientist: test.operator || '',
   section: 'Data',
-  subsection: 'pdb files',
+  subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,
   instance: instance || test.instanceName || ''
 });
 
@@ -473,6 +502,22 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
   };
 
   const restoreDockingFromDrive = async () => {
+    /* ⏹📊 LA RESTAURATION SE RACONTE ET SE LAISSE ARRÊTER. Elle passe par
+       `loadProgress` (la barre du haut du navigateur, TestShellRenderer) et
+       s'enregistre dans `abortControl` : un dossier de 40 PDB se suit et
+       s'interrompt depuis un seul endroit, comme les chargements de structure du
+       viewer 3D. Le `try` couvre TOUT le corps (il y a plusieurs `return`) : le
+       ⏹ et la barre sont libérés par le `finally`, quel que soit le chemin. */
+    const rep = loadProgress.begin('docking structures');
+    let cancelled = false;
+    const unregister = abortControl.register('docking structures', () => { cancelled = true; });
+    rep.phase('Looking for the archived copy on Google Drive…');
+    /* …PEINDRE AVANT DE TRAVAILLER : l'archive d'un docking est un gros
+       `.json.gz` (téléchargement + gunzip + JSON.parse sur le fil principal).
+       Ce geste laisse la page s'afficher — et donc DÉFILER — avant que le
+       travail commence. */
+    await yieldToPaint();
+    try {
     const pointer = activeTest.dockingDrive || null;
     const stems = (pointer && Array.isArray(pointer.stems) && pointer.stems.length
       ? pointer.stems
@@ -486,6 +531,11 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
     const archivedMols = Array.isArray(data.molecules) ? data.molecules : [];
     /* La base du navigateur est réapprovisionnée AVANT l'état : c'est elle que
        le viewer 3D et « Molecules to be docked » relisent. */
+    if (archivedStructs.length || archivedMols.length) {
+      rep.phase('Saving the archived structures in this browser…');
+      // …le texte de la barre est peint AVANT le `JSON.stringify` du magasin.
+      await yieldToPaint();
+    }
     if (archivedStructs.length) await storeJson(dockingStructKey, archivedStructs);
     if (archivedMols.length) await storeJson(dockingMolKey, archivedMols);
 
@@ -500,6 +550,9 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
        l'expérience DOIT montrer arrive toute seule, sans réimport manuel.
        (Défaut rapporté : « some docking tests do not load automatically the
        structure they are supposed to load. ») */
+    rep.phase('Reading the files already in this browser…');
+    // Le magasin du poste est relu (et PARSÉ) : on rend la main juste avant.
+    await yieldToPaint();
     const local = await (async () => {
       const s = await loadJson(dockingStructKey).catch(() => null);
       const m = await loadJson(dockingMolKey).catch(() => null);
@@ -508,13 +561,43 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
         molecules: Array.isArray(m) ? m : []
       };
     })();
+    rep.phase('Reading the file links declared by the dataset…');
     const declared = await fetchDeclaredDockingFiles({
-      test: activeTest, have: local, fetchText: downloadDeclaredDockingText
+      test: activeTest,
+      have: local,
+      fetchText: downloadDeclaredDockingText,
+      /* ⏹📊 LE COMPTEUR RÉEL, ET LA PAGE QUI RESTE VIVANTE : « File 3 of 12 —
+         cluster_3_model_1.pdb » et un pas de 1/12 PAR FICHIER (la barre est
+         LINÉAIRE, elle ne pulse plus), puis on REND LA MAIN AU NAVIGATEUR pour
+         que la page se peigne et se laisse défiler entre deux téléchargements.
+         Le rapporteur rend une promesse : la boucle du téléchargement l'attend
+         (voir utils/dockingDeclaredFiles.js). */
+      onProgress: async (done, total, phase) => {
+        rep.step(done, total, phase);
+        await yieldToPaint();
+      },
+      /* Le ⏹ de la barre du haut arrête la descente : ce qui est déjà arrivé
+         RESTE (la boucle s'interrompt, la suite range ce qu'elle a) — au lieu
+         d'un dossier entier à subir. */
+      isAborted: () => cancelled
     });
     const structs = [...local.structures, ...declared.structures];
     const mols = [...local.molecules, ...declared.molecules];
+    if (structs.length || mols.length) {
+      rep.phase('Saving the structures in this browser…');
+      // Le `JSON.stringify` du magasin complet est la dernière grosse tâche
+      // synchrone : son texte est peint AVANT qu'elle commence.
+      await yieldToPaint();
+    }
     if (structs.length) await storeJson(dockingStructKey, structs);
     if (mols.length) await storeJson(dockingMolKey, mols);
+
+    /* ⏹ ARRÊTÉ PAR L'UTILISATEUR : on le DIT, et ce qui est déjà arrivé est
+       CONSERVÉ (les fichiers déjà rangés restent) — le message porte donc le
+       compte réel, jamais « tout est là ». */
+    const stoppedNote = cancelled
+      ? ` ⏹ Stopped after ${declared.fetched.length} file(s) — the ones already downloaded were kept.`
+      : '';
 
     if (!structs.length && !mols.length) {
       /* Rien dans l'archive ET rien de téléchargeable par les liens déclarés :
@@ -527,7 +610,7 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
         ok: false,
         message: (found
           ? `⚠️ The copy found on Google Drive (${found.name}) holds no structures — re-import the calculation directory.`
-          : '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.') + failNote
+          : '⚠️ The docking structures are not in this browser and no copy was found on Google Drive. Connect Google Drive, then re-import the calculation directory: it archives the structures AND the molecules.') + failNote + stoppedNote
       };
     }
     /* Les métadonnées sont touchées MÊME quand elles décrivent déjà ces
@@ -558,10 +641,17 @@ const useDockingDriveRestore = ({ activeTest, updateActiveTest }) => {
     const source = found ? found.name : 'the file links declared by the dataset';
     return {
       ok: true,
-      message: declared.fetched.length
+      message: (declared.fetched.length
         ? `✅ Docking structures restored from Google Drive — ${declared.fetched.length} file(s) declared by the dataset${failNote}.`
-        : `✅ Docking structures restored from Google Drive (${source})${failNote}.`
+        : `✅ Docking structures restored from Google Drive (${source})${failNote}.`) + stoppedNote
     };
+    } finally {
+      /* La barre du haut et le ⏹ ne survivent JAMAIS à la restauration (même si
+         elle a levé) : le viewer 3D prend la main avec son propre rapporteur
+         (« structure loading »), et un ⏹ armé pour rien resterait sur la page. */
+      unregister();
+      rep.end();
+    }
   };
 
   const dockingRestore = useDriveAutoRestore({
@@ -815,11 +905,18 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
      (« the topology from drive folder »). Le geste manquant est une LECTURE DU
      DOSSIER : l'utilisateur VOIT ce que l'expérience contient et choisit.
 
-     DEUX BRANCHES, LA CANONIQUE D'ABORD (`ctx` = `…/experiment_setup/Structure`,
+     TROIS BRANCHES, LA CANONIQUE D'ABORD (`ctx` = `…/experiment_setup/Structure`,
      le dossier que 📁 « Create drive folder » FABRIQUE : le fichier qu'on vient y
-     déposer à la main est vu en premier) ; puis ce que la page range elle-même
-     (`ctxs` = `…/Data/pdb files`, le dossier de calcul importé, et
-     `…/Data/Docking`, les envois du viewer 3D — voir `driveNaming` plus bas).
+     déposer à la main est vu en premier) ; puis ce que la page range ELLE-MÊME
+     (`ctxs`, dans cet ordre) :
+       • `…/Data/Structure` — la structure déposée / envoyée sous la section `Data` ;
+       • `…/Data/pdb files` — l'ARCHIVE des PDB de CETTE page, celui qu'elle écrit
+         à l'import d'un répertoire de calcul (`DOCKING_PDB_ARCHIVE_SUBSECTION`).
+         C'est le dossier du défaut signalé (Test_86) : il n'était pas lu, donc
+         les modèles du cluster étaient là, sous ses yeux, et le bouton répondait
+         « No .pdb file in this experiment's Drive folders ». Le dossier où la
+         page ÉCRIT est celui qu'elle RELIT — voir la constante plus haut ;
+       • `…/Data/Docking` — les envois du viewer 3D (sous-section `Docking`).
 
      LE FICHIER CHOISI DEVIENT LA STRUCTURE DU CLUSTER : son texte entre dans la
      base du navigateur sous la clé EXACTE que le viewer relit
@@ -889,7 +986,7 @@ export const DockingExperimentSetupSection = ({ ctx }) => {
       label="📂 Topology from Drive folder"
       titleText="List the .pdb / .cif / .mol2 files that are in THIS experiment's Drive folder (even one you deposited by hand) and open one of them as this condition's receptor. Choosing a file here opens it AND declares it: this condition will reopen it by default, on every computer. Nothing is uploaded again."
       ctx={dockFolderCtx('Structure')}
-      ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx('Docking', 'Data')]}
+      ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data'), dockFolderCtx('Docking', 'Data')]}
       exts={DOCKING_TOPOLOGY_EXTS}
       declaredName={selectedStruct ? selectedStruct.name : ''}
       declaredNames={declaredStructureNames}
@@ -1553,10 +1650,13 @@ const DockingImportPanel = ({ ctx, onPoses }) => {
     for (const s of structByName.values()) {
       // Archive the DECOMPRESSED PDB to Drive under Data/pdb files — the viewer
       // always reads the gunzipped text, and Drive also keeps usable .pdb files.
+      // La sous-section vient de la CONSTANTE (et non d'une chaîne recopiée) :
+      // le 📂 « Topology from Drive folder » lit celle-là même — un PDB importé
+      // ici est donc retrouvable par le bouton, ce qu'il n'était pas.
       const driveUrl = await archive(
         s.name, 'chemical/x-pdb',
         s.blob || new Blob([s.pdb], { type: 'chemical/x-pdb' }),
-        ['Data', 'pdb files'], 'Data'
+        ['Data', DOCKING_PDB_ARCHIVE_SUBSECTION], 'Data'
       );
       structs.push({ name: s.name, pdb: s.pdb, driveUrl });
     }

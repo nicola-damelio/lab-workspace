@@ -45,6 +45,11 @@ import { repairBoxPlacements } from './utils/storageBoxes';
    la taille du dataset (41–125 ms mesurés à chaque changement de `tests`). */
 import { yieldToPaint, runInBackground } from './utils/backgroundWork';
 import { deepSame } from './utils/deepSame';
+/* 🧵 LA COMPRESSION HORS DU FIL PRINCIPAL : `JSON.stringify` reste ici (72 ms
+   pour 6,2 Mo de JSON, mesuré), `LZString.compressToUTF16` (3 226 ms pour la
+   même charge) part dans un web worker — la page reste fluide (voir
+   utils/datasetCompression). */
+import { compressPayloadInBackground, compressPayloadSync } from './utils/datasetCompression';
 
 import { setActiveProjectId, readLibrary, readAllProjectLibraries, mergeLibraryFromSnapshot, refreshLibraryFromStorage } from './utils/figuresLibrary';
 import { clearDriveToken, testDriveAccess, getConfiguredDriveClientId, connectDriveWithGis, sharedWorkspaceMode, getWorkspaceServerIssue, getLastDriveConnectError, driveBootstrapRequestedAtLoad, setDriveRootContext, ensureDriveFolder, getDriveToken, uploadWorkspaceFile, cleanupWorkspaceRootFolders, cloudBackendAvailable } from './utils/driveUpload';
@@ -3874,11 +3879,22 @@ const describeProjectWriteRefusal = (restore) => (
     : ''
 );
 
-const compressDatasetForSave = (raw) => {
-  const compress = (data) => LZString.compressToUTF16(JSON.stringify(data));
-  const sizeOf = (data) => compress(data).length * 3; // UTF-16 char -> max 3 UTF-8 bytes
+/* 🧵 LA COMPRESSION SORT DU FIL PRINCIPAL (voir utils/datasetCompression) : les
+   étapes ci-dessous mesurent la charge en la compressant — plusieurs fois — et
+   chacune gelait la page (0,9 s pour 6 Mo ; 3,8 s pour la seule passe LZString,
+   mesuré). Elle ne revient ici que pour le repli. `urgent` (fermeture d'onglet,
+   onglet qui passe en arrière-plan) garde le geste SYNCHRONE : il n'y a plus de
+   peinture à protéger, et une promesse n'aurait plus le temps d'aboutir quand
+   l'onglet disparaît — la dernière minute du travail ne doit pas dépendre d'un
+   aller-retour qui ne reviendra jamais. */
+const compressDatasetForSave = async (raw, urgent = false) => {
+  const compress = (data) => {
+    const json = JSON.stringify(data);
+    return urgent ? compressPayloadSync(json) : compressPayloadInBackground(json);
+  };
+  const sizeOf = async (data) => (await compress(data)).length * 3; // UTF-16 char -> max 3 UTF-8 bytes
   const budget = 900000; // Firestore field limit is 1048487 bytes; stay well under.
-  if (sizeOf(raw) <= budget) return compress(raw);
+  if ((await sizeOf(raw)) <= budget) return compress(raw);
 
   // Stage 1: drop the heavy legacy chart images (mdNotebookCharts) that no
   // longer belong in the dataset document — the MD notebook now renders its
@@ -3893,7 +3909,7 @@ const compressDatasetForSave = (raw) => {
       return clean;
     })
   };
-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
 
   // Stage 2: the serialized FCS payloads (fcParsed / fcExtraFiles[].data) are
   // RECOVERABLE — the raw files are kept in the browser IndexedDB cache and in
@@ -3901,7 +3917,7 @@ const compressDatasetForSave = (raw) => {
   // (largest first) so small files keep their fast restore path.
   {
     let guard = 0;
-    while (sizeOf(cleaned) > budget && guard < 40) {
+    while ((await sizeOf(cleaned)) > budget && guard < 40) {
       guard++;
       let best = null; // { testIndex, kind, extraIdx, size }
       (cleaned.tests || []).forEach((test, ti) => {
@@ -3926,14 +3942,14 @@ const compressDatasetForSave = (raw) => {
       }
     }
   }
-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
 
   // Stage 3: iteratively drop the LARGEST base64 images embedded in notebook
   // `comments` until the payload fits (a single image below 40 KB may still
   // overflow when there are many of them). Each dropped image is replaced with
   // a placeholder note, so no content is ever silently lost from the document.
   let guard = 0;
-  while (sizeOf(cleaned) > budget && guard < 40) {
+  while ((await sizeOf(cleaned)) > budget && guard < 40) {
     guard++;
     let target = null; // { testId, len, img }
     cleaned.tests.forEach((test) => {
@@ -3949,7 +3965,7 @@ const compressDatasetForSave = (raw) => {
       return { ...test, comments: test.comments.replace(target.img, '<p style="color:#94a3b8;">[large image omitted from saved notebook — re-run the analysis to re-append]</p>') };
     });
   }
-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
 
   // Stage 4: cap the largest analysis arrays (MD time series). The notebook
   // re-renders figures from data and the per-atom table already holds the
@@ -3964,7 +3980,7 @@ const compressDatasetForSave = (raw) => {
     }
     return clean;
   });
-  if (sizeOf(cleaned) <= budget) return compress(cleaned);
+  if ((await sizeOf(cleaned)) <= budget) return compress(cleaned);
 
   // Stage 5 (guarantee — the save must NEVER fail): iteratively drop the
   // heaviest binary/data values left in ANY experiment page — long base64
@@ -4030,7 +4046,7 @@ const compressDatasetForSave = (raw) => {
   };
   {
     let guard = 0;
-    while (sizeOf(cleaned) > budget && guard < 60) {
+    while ((await sizeOf(cleaned)) > budget && guard < 60) {
       guard++;
       let best = null;
       (cleaned.tests || []).forEach((test, ti) => {
@@ -4092,7 +4108,11 @@ useEffect(() => {
          être effacé par cet enregistrement. */
       rawData.tests = await guardDistantExperiments(rawData.tests);
       // Compress payload to prevent Firestore 1MB limit and write stream exhaustion
-      const compressedPayload = compressDatasetForSave(rawData);
+      /* 🧵 …et il ATTEND la charge, parce qu'elle arrive désormais d'un AUTRE
+         fil (voir utils/datasetCompression) : le fil principal, lui, n'a fait
+         que `JSON.stringify` (72 ms pour 6,2 Mo, mesuré) pendant que le worker
+         compresse. `urgent` = plus d'écran à protéger → tout se fait ici. */
+      const compressedPayload = await compressDatasetForSave(rawData, urgent);
 
       const updatedPayload = {
         title: datasetTitle || 'Untitled Dataset',
@@ -4231,8 +4251,10 @@ useEffect(() => {
       const writeTicket = takeWriteTicket(currentDatasetId);
       try {
         /* 🖐 La base d'administration se compresse aussi (tout son contenu d'un
-           bloc) : elle attend la peinture de ce que l'utilisateur vient d'ouvrir
-           (voir utils/backgroundWork). */
+           bloc) : elle attend la peinture de ce que l'utilisateur vient d'ouvrir,
+           PUIS la compression part dans un fil (voir utils/datasetCompression) —
+           le fil principal n'attend plus qu'une promesse (voir
+           utils/backgroundWork). */
         await yieldToPaint();
         const updatedPayload = {
           kind: 'administration',
@@ -4242,7 +4264,7 @@ useEffect(() => {
           updatedAt: window.firebase
             ? window.firebase.firestore.FieldValue.serverTimestamp()
             : Date.now(),
-          payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent })),
+          payload: await compressPayloadInBackground(JSON.stringify({ administration: adminContent })),
           isCompressed: true
         };
         if (!holdsLatestWriteTicket(currentDatasetId, writeTicket)) return;
@@ -5311,7 +5333,12 @@ const saveLeavingDataset = (datasetId, isAdmin) => {
          dataset est CELUI QU'ON VIENT DE QUITTER, et l'écran ne doit pas être
          retouché : l'utilisateur regarde déjà autre chose. */
       if (!isAdmin) rawData.tests = await guardDistantExperiments(rawData.tests, { datasetId, applyToScreen: false });
-      const compressedPayload = isAdmin ? '' : compressDatasetForSave(rawData);
+      /* 🧵 Comme la sauvegarde automatique : la charge part se compresser dans un
+         fil (voir utils/datasetCompression). La sortie d'un dataset reste
+         immédiate — c'est l'ARRIVÉE qui ne doit pas attendre, et elle n'attend
+         plus rien (le geste ci-dessus a rendu la main) : ce qui tournait ici sur
+         le fil principal, c'était 0,9 s pour 6 Mo, mesuré. */
+      const compressedPayload = isAdmin ? '' : await compressDatasetForSave(rawData);
       
       const updatedPayload = isAdmin
         ? {
@@ -5322,7 +5349,7 @@ const saveLeavingDataset = (datasetId, isAdmin) => {
             updatedAt: window.firebase
               ? window.firebase.firestore.FieldValue.serverTimestamp()
               : Date.now(),
-            payload: LZString.compressToUTF16(JSON.stringify({ administration: adminContent || createAdministrationSeed() })),
+            payload: await compressPayloadInBackground(JSON.stringify({ administration: adminContent || createAdministrationSeed() })),
             isCompressed: true
           }
         : {

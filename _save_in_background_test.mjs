@@ -233,7 +233,7 @@ ok(!sameByJson({ a: 1, b: 2 }, { b: 2, a: 1 }), '…là où JSON.stringify, lui,
   ok(atSave > 0, 'l’enregistrement automatique dit s’il est URGENT ou d’arrière-plan');
   const SAVE = APP.slice(atSave, atEffectEnd);
   const atYield = SAVE.indexOf('if (!urgent) await yieldToPaint();');
-  const atCompress = SAVE.indexOf('compressDatasetForSave(rawData)');
+  const atCompress = SAVE.indexOf('await compressDatasetForSave(rawData');
   const atPublish = SAVE.indexOf('publishDatasetStructure({');
   ok(atYield > 0, 'il rend la main quand il n’est pas urgent');
   ok(atCompress > atYield, '…AVANT la compression (884 ms pour 6 Mo : mesuré)');

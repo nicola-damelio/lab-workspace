@@ -25,12 +25,23 @@
         importé le dossier de calcul, et sans elle un import ancien restait sans
         la structure qu'il devait montrer.
 
+   …ET le §6 bis (le défaut « Test_86 » du 14/10) : le 📂 « Topology from Drive
+   folder » doit lire le dossier où la page ÉCRIT (`Data/pdb files`, slugué
+   `pdb_files`). Il ne le lisait pas : un PDB importé par la page elle-même
+   restait introuvable pour son propre bouton, qui répondait « No .pdb … file in
+   this experiment's Drive folders » en citant `…/data/Structure`, `…/data` et
+   `…/data/Docking`.
+
    Les modules sont IMPORTÉS pour de vrai (ils sont purs) ; le JSX est vérifié
    par analyse de source, comme _docking_viewer_restore_test.mjs.
    ========================================================================= */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dockingStructureSrcOf, isDirectStructureSrc, rcsbModelUrl, PDB_CODE_RE } from './src/utils/dockingStructureSrc.js';
+/* La RÈGLE DE CHEMIN de l'application, importée pour de vrai : le §6 bis vérifie
+   que la sous-section d'archive du 📂 (`pdb files`) EST bien le dossier
+   `data/pdb_files` du Drive — le chemin du défaut signalé. */
+import { canonicalExperimentPath } from './src/utils/driveNaming.js';
 import { DOCKING_TOPOLOGY_EXTS, declaredDockingFiles, dockingTopologyExt, fetchDeclaredDockingFiles, missingDeclaredDockingFiles, structureNameKey } from './src/utils/dockingDeclaredFiles.js';
 
 let passed = 0;
@@ -212,8 +223,33 @@ eq(dockingTopologyExt(''), 'pdb', 'un nom vide aussi — jamais d’extension in
 ok(/const dockTopologyFromFolder = \([\s\S]{0,1200}?onPick=\{pickTopologyFromFolder\}/.test(SRC),
   'la page a UN 📂 « Topology from Drive folder », qui installe le fichier choisi');
 ok(SRC.includes("ctx={dockFolderCtx('Structure')}")
-  && SRC.includes("ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx('Docking', 'Data')]}"),
+  && SRC.includes("ctxs={[dockFolderCtx('Structure', 'Data'), dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data'), dockFolderCtx('Docking', 'Data')]}"),
   '…le dossier canonique (celui que 📁 Create drive folder fabrique) D’ABORD, puis les branches de la page');
+
+/* ── 6 bis. LE DOSSIER OÙ LA PAGE ÉCRIT EST CELUI QU’ELLE RELIT ────────────
+   Défaut signalé (Test_86) : « in test_86 I don’t see its pdb, and “topology from
+   drive folder” says: No .pdb / .ent / .cif / .mmcif / .mol2 / .sdf file in this
+   experiment's Drive folders — checked: …/experiment_setup/Structure ·
+   …/experiment_setup · …/instance1 · …/Test_86 · …/data/Structure · …/data ·
+   …/data/Docking ». Les modèles du cluster étaient pourtant dans
+   `…/instance1/data/pdb_files` — le dossier que CETTE page ÉCRIT à l’import d’un
+   répertoire de calcul (sous-section `pdb files`, sluguée `pdb_files`) : il ne
+   figurait pas dans les branches lues, donc le bouton annonçait « rien » là où
+   la page elle-même venait de déposer les fichiers.
+   Les deux gestes emploient donc UNE SEULE constante, et le chemin qui en découle
+   est vérifié par le constructeur de chemin de l’application (jamais recopié). */
+const ARCHIVE_SECTION = (SRC.match(/const DOCKING_PDB_ARCHIVE_SUBSECTION = '([^']+)';/) || [])[1];
+eq(ARCHIVE_SECTION, 'pdb files',
+  'la sous-section d’archive des PDB est nommée UNE fois — le nom que l’import emploie depuis toujours');
+ok(/archive\(\s*s\.name,[\s\S]{0,240}?\['Data', DOCKING_PDB_ARCHIVE_SUBSECTION\],\s*'Data'\s*\)/.test(SRC),
+  '…l’import du répertoire de calcul ÉCRIT les PDB par cette constante');
+ok(/subsection: DOCKING_PDB_ARCHIVE_SUBSECTION,/.test(SRC),
+  '…la copie de référence rangée à côté (dockingDriveCtx) aussi');
+ok(SRC.includes("dockFolderCtx(DOCKING_PDB_ARCHIVE_SUBSECTION, 'Data')"),
+  '…et le 📂 LIT ce dossier-là : le dossier où la page écrit est celui qu’elle relit');
+eq(canonicalExperimentPath({ project: 'P', test: 'Test_86', instance: 'instance1', section: 'Data', subsection: ARCHIVE_SECTION }),
+  ['projects', 'P', 'Test_86', 'instance1', 'data', 'pdb_files'],
+  '…et ce dossier est bien `data/pdb_files` sur le Drive (le chemin exact du défaut signalé)');
 ok(SRC.includes('storeJson(structKey, next)')
   && SRC.includes("dockingStructures: next.map((s) => ({ name: s.name, driveUrl: s.driveUrl || '' }))"),
   'le fichier choisi est rangé là où le viewer relit, et les métadonnées sont touchées (structList se réveille)');
