@@ -53,7 +53,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 /* ── UN POSTE : SON MODÈLE (ce que son écran porte) + SON AUTOSAVE ─────────
    Le modèle est la seule source : les expériences, leurs noms, le lien au
    projet. C'est exactement la charge qu'App.jsx sauvegarde (App.jsx:4100). */
-const createSite = ({ pc, index, seed, tag }) => {
+const createSite = ({ pc, index, seed, tag, autosave = {} }) => {
   const rng = makeRng(seed * 131 + index * 17 + 1);
   const site = {
     tag, pc, rng, ops: 0, everCreated: [], deleted: [],
@@ -61,7 +61,7 @@ const createSite = ({ pc, index, seed, tag }) => {
   };
   site.data = () => clone(site.model);
   site.auto = createAutosaveReplica({
-    pc, datasetId: DATASET.datasetId, delayMs: 5,
+    pc, datasetId: DATASET.datasetId, delayMs: 5, ...autosave,
     payloadFn: () => {
       const d = clone(site.model);
       d.datasetTitle = DATASET.datasetName;
@@ -86,6 +86,38 @@ const createSite = ({ pc, index, seed, tag }) => {
     t.name = name;
     touch();
     return true;
+  };
+  /* ⚠ LE GESTE DE L'APP QUAND ON QUITTE LE CHAMP DU NOM
+     (`activeTestModule.jsx:545-591` : `onFocus` retient le nom d'AVANT,
+     `onBlur` appelle `renameDriveFilesFor({ field:'test', oldValue, newValue,
+     project })`). Le harnais, sans ce geste, ne teste QUE la republication du
+     nom — c'est la différence qui explique « aucune cartouche “Prov” restée sur
+     le Drive réel » (prove manuali del 16/10/2026). Rend ce que l'appel Drive
+     répond (ou `{ error }`). */
+  site.leaveNameField = (oldValue, newValue, project = 'Proj') =>
+    pc.do((M) => M.upload.renameDriveFilesFor({ field: 'test', oldValue, newValue, project }))
+      .catch((err) => ({ error: String((err && err.message) || err) }));
+  /** RENOMMER COMME L'APP : la frappe écrit le modèle, la SORTIE DU CHAMP fait
+   *  le geste Drive (l'ancien nom est celui d'AVANT le focus, pas le dernier
+   *  nom partiel publié). */
+  site.renameExperimentWithGesture = async (id, name) => {
+    const t = site.model.tests.find((x) => x.id === id);
+    if (!t) return false;
+    const before = t.name;
+    site.renameExperiment(id, name);          // la frappe (App.jsx:4071 → minuteur)
+    await site.leaveNameField(before, name);  // la sortie du champ (le geste Drive)
+    return true;
+  };
+  /** Le magasin LOCAL du poste (ce qui reste si l'onglet meurt avant l'écriture). */
+  site.localExperiments = () => site.auto.localExperiments();
+  /** LA RÉOUVERTURE DU POSTE : une session neuve repart de son magasin local,
+   *  exactement comme la liste des datasets à l'ouverture (App.jsx:5809-5813). */
+  site.reopen = () => {
+    const found = site.auto.reopenSession();
+    site.model = found.model
+      ? { ...site.model, ...found.model }
+      : { datasetTitle: DATASET.datasetName, subtitle: '', projects: [{ id: 'p1', name: 'Proj' }], tests: [] };
+    return found;
   };
   site.moveExperiment = (id, project) => {
     const t = site.model.tests.find((x) => x.id === id);
@@ -134,8 +166,17 @@ const runScenario = async ({ seed, factor }) => {
     ...DATASET, seed,
     drive: { coherenceMs: lag, errorRate: factor.errorRate || 0, errorStatuses: [429, 500] }
   });
-  const A = createSite({ h, pc: h.pcs[0], index: 0, seed, tag: 'a' });
-  const B = factor.secondPc ? createSite({ h, pc: h.pcs[1], index: 1, seed, tag: 'b' }) : null;
+  /* LA FENÊTRE D'AVANT L'ÉCRITURE (question 4) : le test FERME lui-même l'attente
+     qui précède l'écriture locale (`hooksBeforeWrite`) — aucune course d'horloge.
+     Le portail n'est ARMÉ que pour la sauvegarde de la fermeture. */
+  let openGate = null;
+  let armed = false;
+  const gate = new Promise((resolve) => { openGate = resolve; });
+  const autosave = factor.earlyClose
+    ? { hooksBeforeWrite: [() => (armed ? gate : Promise.resolve())] }
+    : {};
+  const A = createSite({ h, pc: h.pcs[0], index: 0, seed, tag: 'a', autosave });
+  const B = factor.secondPc ? createSite({ h, pc: h.pcs[1], index: 1, seed, tag: 'b', autosave }) : null;
   const sites = B ? [A, B] : [A];
   const rng = makeRng(seed * 977 + 7);
   const pick = () => sites[Math.floor(rng() * sites.length)];
@@ -154,7 +195,12 @@ const runScenario = async ({ seed, factor }) => {
           await s.auto.flush();
         }
         s.staleNames = [...(s.staleNames || []), t.name];
-        s.renameExperiment(t.id, next);
+        /* DEUX MANIÈRES DE RENOMMER, MESURÉES SÉPARÉMENT : le modèle seul (ce que
+           le harnais faisait jusqu'ici) ou le modèle + LA SORTIE DU CHAMP (ce que
+           l'app fait vraiment — `activeTestModule.jsx:545-591`). Sans la seconde,
+           on mesure la republication du nom, pas le geste de l'utilisateur. */
+        if (factor.fieldGesture) await s.renameExperimentWithGesture(t.id, next);
+        else s.renameExperiment(t.id, next);
       } else if (choice < 0.75) {
         s.moveExperiment(t.id, rng() < 0.5 ? 'Proj' : 'Autre');
       } else if (choice < 0.9) {
@@ -172,6 +218,45 @@ const runScenario = async ({ seed, factor }) => {
     const s = pick();
     s.addExperiment();
     s.auto.killWithoutFlush();
+  }
+  /* ── LA FERMETURE PRÉCOCE (question 4) : l'onglet meurt PENDANT les attentes
+     d'avant l'écriture (App.jsx:4110 la relecture de la copie partagée, 4116 la
+     compression). RIEN n'a encore été écrit : ni magasin local, ni copie du
+     dataset, ni arbre. On mesure ce qui reste, puis ce que la RÉOUVERTURE
+     retrouve (une session neuve repart de son magasin local, App.jsx:5809). */
+  if (factor.earlyClose) {
+    const s = sites[0];
+    armed = true;                                   // la prochaine écriture ATTEND
+    const created = s.addExperiment();
+    await new Promise((r) => setTimeout(r, 25));    // le minuteur (5 ms) est passé : la sauvegarde est parquée
+    s.auto.killDuringSave();                        // la page est détruite pendant l'attente
+    if (openGate) openGate();                       // l'attente se dénoue (trop tard)
+    await new Promise((r) => setTimeout(r, 25));
+    const reopened = s.reopen();                    // onglet rouvert
+    const earlyClose = {
+      id: created.id,
+      name: created.name,
+      diedIn: s.auto.report.diedIn || '',
+      localIds: reopened.ids,
+      localNames: reopened.names,
+      storeEntries: s.auto.readLocalStore().length,
+      copyIds: null
+    };
+    return measure(h, sites, { earlyClose });
+  }
+  /* ── A GARDE DES MODIFICATIONS NON PUBLIÉES PENDANT QUE B ÉCRIT (question 4) :
+     le minuteur de A est annulé (rien de A n'est parti), B publie et pousse SA
+     copie, puis A repart et publie la sienne : un seul fichier de copie, donc
+     « l'ultimo che scrive vince » — et l'arbre de A ne connaît pas l'expérience
+     de B. */
+  if (factor.staleFirstPc) {
+    const [a, b] = sites;
+    a.addExperiment();
+    a.addExperiment();
+    a.auto.killWithoutFlush();       // le minuteur de A meurt : rien n'est parti
+    b.addExperiment();
+    await b.auto.flush();            // B écrit : magasin local + copie + arbre
+    await b.publishNow();
   }
   /* FIN D'USAGE NORMALE : chaque poste repart, vide, publie — puis on regarde. */
   for (const s of sites) {
@@ -191,7 +276,15 @@ const FACTORS = [
   { id: 'lag-10s', title: 'Retard de cohérence 10 s (2 postes)', coherenceMs: 10000, secondPc: true },
   { id: 'reseau', title: 'Erreurs Drive 1 sur 5 (2 postes)', coherenceMs: 0, secondPc: true, errorRate: 0.2 },
   { id: 'onglet-ferme', title: 'Onglet fermé à mi-chemin (2 postes)', coherenceMs: 0, secondPc: true, tabKilled: true },
-  { id: 'renommage-lent', title: 'Renommages lents (2 postes)', coherenceMs: 1000, secondPc: true, slowRename: true }
+  { id: 'renommage-lent', title: 'Renommages lents (2 postes)', coherenceMs: 1000, secondPc: true, slowRename: true },
+  /* ⚠ LE MÊME RENOMMAGE, MAIS AVEC LE GESTE DE L'APP (la sortie du champ) : la
+     comparaison avec la ligne précédente dit si les restes de renommage viennent
+     du modèle seul (ce que le harnais faisait) ou du geste réel. */
+  { id: 'renommage-champ', title: 'Renommages lents + SORTIE DU CHAMP (2 postes)', coherenceMs: 1000, secondPc: true, slowRename: true, fieldGesture: true },
+  /* QUESTION 4 — l'onglet meurt PENDANT les attentes d'avant l'écriture. */
+  { id: 'chiusura-precoce', title: 'Scheda chiusa PRIMA dell’autosave (1 poste, attese reali)', coherenceMs: 0, secondPc: false, earlyClose: true },
+  /* QUESTION 4 — un poste avec des modifications non envoyées pendant que l'autre écrit. */
+  { id: 'a-non-inviato-b-salva', title: 'A ha modifiche non inviate, B salva (2 posti)', coherenceMs: 0, secondPc: true, staleFirstPc: true }
 ];
 
 /* La matrice est exécutée APRÈS la définition de `measure` (plus bas) : elle en
@@ -200,7 +293,7 @@ const main = async () => {
 const rows = [];
 for (const factor of FACTORS) {
   if (ONLY && factor.id !== ONLY) continue;
-  const acc = { seeds: 0, twins: 0, missing: 0, extra: 0, lost: 0, divergence: 0, notIdempotent: 0, stale: 0, bad: 0, examples: [] };
+  const acc = { seeds: 0, twins: 0, missing: 0, extra: 0, lost: 0, lostLocal: 0, copyUnreadable: 0, divergence: 0, notIdempotent: 0, stale: 0, bad: 0, examples: [], earlyClose: [] };
   for (let i = 0; i < SEEDS; i += 1) {
     const seed = SEED0 + i;
     const m = await runScenario({ seed, factor });
@@ -209,11 +302,14 @@ for (const factor of FACTORS) {
     if (m.missing) acc.missing += 1;
     if (m.extra) acc.extra += 1;
     if (m.lost) acc.lost += 1;
+    if (m.lostLocal) acc.lostLocal += 1;
+    if (m.copyUnreadable) acc.copyUnreadable += 1;
     if (m.divergence) acc.divergence += 1;
     if (m.stale) acc.stale += 1;
     if (!m.idempotent) acc.notIdempotent += 1;
+    if (m.earlyClose && acc.earlyClose.length < 3) acc.earlyClose.push({ seed, ...m.earlyClose });
     if (m.debug) acc.debug = [...(acc.debug || []), m.debug];
-    const dirty = m.twins || m.missing || m.lost || m.divergence || m.stale || !m.idempotent;
+    const dirty = m.twins || m.missing || m.lost || m.lostLocal || m.divergence || m.stale || !m.idempotent;
     if (dirty) {
       acc.bad += 1;
       if (acc.examples.length < 2) acc.examples.push(`graine ${seed} → ${JSON.stringify({ jumeaux: m.twins, absents: m.missing, horsPlan: m.extra, perdus: m.lost, divergence: m.divergence, reste: m.stale, idempotent: m.idempotent, ex: m.extraExamples, exAbsents: m.missingExamples, report: m.againReport })}`);
@@ -233,9 +329,9 @@ if (process.env.SYNC_DEBUG) {
     });
   }
 }
-console.log('facteur                        | jumeaux | absents | hors plan | perdus | divergence 2 postes | reste de renommage | non idempotent | scénarios sales');
+console.log('facteur                        | jumeaux | absents | hors plan | perdus | copia illegg. | persi in locale | divergence 2 postes | reste de renommage | non idempotent | scénarios sales');
 for (const { factor, acc } of rows) {
-  console.log(`${factor.id.padEnd(30)} | ${String(acc.twins).padStart(7)} | ${String(acc.missing).padStart(7)} | ${String(acc.extra).padStart(9)} | ${String(acc.lost).padStart(6)} | ${String(acc.divergence).padStart(19)} | ${String(acc.stale).padStart(18)} | ${String(acc.notIdempotent).padStart(14)} | ${acc.bad}/${acc.seeds}`);
+  console.log(`${factor.id.padEnd(30)} | ${String(acc.twins).padStart(7)} | ${String(acc.missing).padStart(7)} | ${String(acc.extra).padStart(9)} | ${String(acc.lost).padStart(6)} | ${String(acc.copyUnreadable).padStart(13)} | ${String(acc.lostLocal).padStart(15)} | ${String(acc.divergence).padStart(19)} | ${String(acc.stale).padStart(18)} | ${String(acc.notIdempotent).padStart(14)} | ${acc.bad}/${acc.seeds}`);
 }
 for (const { factor, acc } of rows) {
   console.log(`\n▸ ${factor.title}`);
@@ -249,12 +345,34 @@ if (control && control.acc.bad > 0) {
   console.log('   (dossier vide au nouveau nom, « absents » dans le plan, copie du dataset écrasée). C’est un RÉSULTAT, pas une panne du harnais.');
   console.log('   Le scénario minimal est dans _drive_sync_repro_test.mjs, section « R » : quatre gestes, aucun aléa.');
 }
+/* ── QUESTION 4 : LE PIRE CAS — LA SCHEDA CHIUSA PRIMA DELL'AUTOSAVE ──────── */
+const early = rows.find((r) => r.factor.id === 'chiusura-precoce');
+if (early) {
+  console.log('\n▸ CHIUSURA PRECOCE (scheda chiusa DURANTE le attese d’avant l’écriture)');
+  console.log(`   esperienze perdute ANCHE nel magazzino LOCALE : ${early.acc.lostLocal}/${early.acc.seeds}`);
+  early.acc.earlyClose.forEach((e) => console.log(`   · graine ${e.seed} : « ${e.name} » (${e.id}) — morte pendant « ${e.diedIn} », magazzino locale : ${JSON.stringify(e.localNames)}, copia Drive : ${JSON.stringify(e.copyIds)}`));
+  console.log('   lettura : se la perdita è n/n, la chiusura entro 1,5 s NON è riparata da `pagehide`');
+  console.log('   (le attese d’avant l’écriture — App.jsx:4110/4116 — non si concludono in una pagina distrutta),');
+  console.log('   quindi la « persistenza delle modifiche non inviate » (punto G della FASE 1) ha una prova.');
+}
+/* ── IL GESTO DEL CAMPO CAMBIA IL RISULTATO? (il punto 2 da declassare) ───── */
+const slowRow = rows.find((r) => r.factor.id === 'renommage-lent');
+const gestRow = rows.find((r) => r.factor.id === 'renommage-champ');
+if (slowRow && gestRow) {
+  console.log('\n▸ RENOMMAGE : « modello solo » ⟷ « modello + sortie du champ » (il gesto dell’app)');
+  console.log(`   reste de renommage : ${slowRow.acc.stale}/${slowRow.acc.seeds} (modello solo) — ${gestRow.acc.stale}/${gestRow.acc.seeds} (gesto reale)`);
+  console.log(`   jumeaux : ${slowRow.acc.twins}/${slowRow.acc.seeds} — ${gestRow.acc.twins}/${gestRow.acc.seeds}`);
+}
 const dirtyNonControl = rows.filter((r) => r.factor.id !== 'controle' && r.acc.bad > 0).length;
-console.log(`\nMODE : ${STRICT ? 'STRICT' : 'BASELINE'} — facteurs sales (hors contrôle) : ${dirtyNonControl}/${rows.length - 1}`);
+/* Le dénominateur ne compte que les facteurs RÉELLEMENT exécutés (et seulement
+   s'ils contiennent le run de contrôle) — un `--factor=…` seul ne doit pas
+   annoncer « 1/0 ». */
+const ranFactors = rows.length - (rows.some((r) => r.factor.id === 'controle') ? 1 : 0);
+console.log(`\nMODE : ${STRICT ? 'STRICT' : 'BASELINE'} — facteurs sales (hors contrôle) : ${dirtyNonControl}/${ranFactors}`);
 process.exit(STRICT && dirtyNonControl ? 1 : 0);
 };
 
-const measure = async (h, sites) => {
+const measure = async (h, sites, extra = {}) => {
   const DRIVE = h.drive;
   const model = sites[0].model;
   const plan = h.mods.structure.datasetMirrorPlan({
@@ -285,10 +403,21 @@ const measure = async (h, sites) => {
     try { ids = rec && rec.payload ? (JSON.parse(rec.payload).tests || []).map((t) => t.id) : null; } catch { ids = 'unreadable'; }
     copies.push(ids);
   }
-  /* I3 : ce qui a été créé et jamais supprimé doit être lisible quelque part. */
+  /* I3 : ce qui a été créé et jamais supprimé doit être lisible quelque part.
+     ⚠ LA COPIE EST UN SEUL FICHIER, ET LE HARNAIS DIT QUAND IL EST ILLISIBLE :
+     compter « perdus » alors que le fichier n'a pas été lu (Drive muet, écriture
+     refusée — le message « not connected » du faux Drive) serait un faux défaut.
+     Le compte n'est donc fait QUE si la copie a été relue, et le cas est dit. */
   const unionIds = [...new Set(sites.flatMap((s) => s.everCreated))].filter((id) => !sites.some((s) => s.deleted.includes(id)));
-  const onDrive = Array.isArray(copies[0]) ? copies[0] : [];
-  const lost = unionIds.filter((id) => !onDrive.includes(id));
+  const copyReadable = Array.isArray(copies[0]);
+  const onDrive = copyReadable ? copies[0] : [];
+  const lost = copyReadable ? unionIds.filter((id) => !onDrive.includes(id)) : [];
+  /* I7 (question 4) : ce même travail est-il dans le MAGASIN LOCAL du poste ?
+     C'est la SEULE copie dont un poste dispose sans réseau : si elle manque aussi,
+     l'expérience n'existe plus nulle part. */
+  const localIds = extra.earlyClose && Array.isArray(extra.earlyClose.localIds) ? extra.earlyClose.localIds : null;
+  const lostLocal = Array.isArray(localIds) ? unionIds.filter((id) => !localIds.includes(id)) : [];
+  if (extra.earlyClose) extra.earlyClose.copyIds = Array.isArray(copies[0]) ? copies[0] : null;
   /* I2 : LES DEUX ÉCRANS portent-ils les mêmes expériences ? (Ce n'est pas la
      copie du Drive qui est comparée — la copie est un fichier unique, donc les
      deux postes y liraient forcément la même chose. C'est bien ce que CHAQUE
@@ -316,6 +445,8 @@ const measure = async (h, sites) => {
   return {
     twins: twins.length, missing: missing.length, extra: extraFolders.length,
     lost: lost.length, divergence, idempotent, stale: staleFolders.length,
+    copyUnreadable: !copyReadable,
+    lostLocal: lostLocal.length, earlyClose: extra.earlyClose || null,
     rewritten: again && again.report ? again.report.files : -1,
     againReport: (again && again.report) || null,
     idemDetail: { nodesBefore, nodesAfter, opsBefore, opsAfter },

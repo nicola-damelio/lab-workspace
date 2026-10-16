@@ -5632,31 +5632,58 @@ rapport complet, en italien, est `docs/DRIVE-SYNC-FASE0.md` ; ici, l'essentiel.
 
 **Ce que cela a ÉTABLI (exécuté, pas relu) :**
 
-1. **Renommer une expérience par la publication DUPLIQUE** : le dossier du
-   nouveau nom naît **VIDE**, l'ancien garde tout — y compris le JSON du nouvel
-   état, écrit DANS l'ancien dossier — et le **déplacement** vers un autre projet
-   ne produit **rien**. Une session neuve ne répare pas. Scénario minimal :
+0. ⚠ **Corrigé le 16/10/2026 — un défaut du FAUX Drive, pas de l'app** : son lecteur
+   de `q` perdait toutes les clauses après la première (`i += String(… )` rendait
+   l'indice *chaîne de caractères* : `i` valait « 174 » et la boucle s'arrêtait).
+   `name='_meta.json' and '<dossier>' in parents` ignorait donc le dossier, et
+   l'adoption par identité pouvait lire la description d'un AUTRE dossier. Tout ce
+   qui suit a été **refait** avec le faux Drive corrigé : le **contrôle est
+   maintenant PROPRE (0/20)**, le **déplacement d'une expérience FONCTIONNE**, et
+   le nouveau dossier d'un renommage **porte ses fichiers** (il n'était plus vide).
+1. **Renommer DUPLIQUE — pour les objets SANS identité dans le plan** : l'identité
+   n'est écrite que sur le **dernier niveau** (`driveStructure.js:643-646`), donc
+   une expérience **avec instance ou section** crée un dossier à chaque nom publié
+   et laisse l'ancien (mesuré : `Alpha`+`Beta` ; `Exp`+`Exp_1`+`Exp_10`), tandis
+   qu'un **projet** ou une expérience **sans instance/section** est **renommé sur
+   place** (mesuré : `Gamma → Delta`, un seul dossier). Scénario minimal :
    section « R » de `_drive_sync_repro_test.mjs` (quatre gestes, aucun aléa).
 2. **Deux expériences de même nom = une seule** (une seule carte, un seul
    `Test_1.json`) ; « Test N » (`tests.length + 1`) reproduit le nom après une
    suppression ; supprimer par nom emporte **les deux**.
 3. **La copie du dataset s'écrit en bloc, sans relecture** : le travail de
-   l'autre poste disparaît sans un mot, et dans la fenêtre de cohérence (5 s) il
-   naît deux jumeaux du même fichier.
+   l'autre poste disparaît sans un mot (mesuré : 18-20/20), et dans la fenêtre de
+   cohérence (5 s) il naît deux jumeaux du même fichier.
 4. **Trashed=false partout, pagination entière** (1 200 enfants, 2 pages),
    **jumelle canonique déterministe**. Un dossier mis à la corbeille : la
    publication échoue dessus dans la MÊME session (« The target folder is
    gone »), et le reprend (même identifiant) dans une session neuve.
 5. **Au-delà de 8 Mo** (`MAX_DATASET_COPY_BYTES`), la copie Drive n'est pas
-   écrite et seul un avertissement de console le dit.
+   écrite et seul un avertissement de console le dit — mais la copie réelle pèse
+   **quelques kB** : c'est une limite théorique.
 6. **Aucune suppression DÉFINITIVE** (`DELETE`) n'est émise par l'app : la
    corbeille seulement. Vérifié à chaque exécution (le faux Drive compte).
+7. **Une scheda chiusa entro 1,5 s perde l'esperienza ANCHE nel magazzino locale**
+   (20/20 graines) : l'écriture locale d'App.jsx est APRÈS deux attentes
+   (`guardDistantExperiments` 4110 = lecture réseau, `compressDatasetForSave`
+   4116), et il n'y a **aucun `keepalive`** dans `src/`. Un poste qui garde des
+   modifications non envoyées pendant que l'autre écrit : **20/20** d'expériences
+   perdues dans la copie et **20/20** d'écrans divergents.
+8. **Le geste d'aller-retour dans le champ du nom** (`onBlur` →
+   `renameDriveFilesFor`, `activeTestModule.jsx:545-591`) **ne rattrape PAS** les
+   dossiers déjà publiés : mesuré, il n'améliore rien (facteur `renommage-champ`).
 
-**Matrice facteur → symptôme** (20 graines par facteur, 15 s) : le CONTRÔLE
-(1 poste, aucun retard, aucune erreur) est DÉJÀ sale — donc le défaut n'est pas
-une course entre postes, c'est le chemin de publication. Le **retard de
-cohérence** (1 s ou 10 s) rend les **jumeaux systématiques** : 20/20 graines
-(0/20 sans lui). Deux postes → divergence des deux écrans 19-20/20.
+**Matrice facteur → symptôme** (20 graines par facteur) : le **CONTRÔLE (1 poste,
+aucun retard, aucune erreur) est PROPRE 0/20** ; ce sont le **retard de cohérence**
+(1 s ou 10 s) qui rend les **jumeaux systématiques** (20/20, contre 0/20 sans lui)
+et les **deux postes** qui rendent la divergence des écrans certaine (19-20/20).
+Nouveaux facteurs : `renommage-champ`, `chiusura-precoce`, `a-non-inviato-b-salva`.
+
+**FASE 1, ordre A→G** : A–F inchangés (arrêter le doublon, nom libre, confirmation
+qui dit ce qui disparaît, nom écrit à la confirmation, état de synchronisation
+visible « N modifiche da inviare » + avis à la fermeture s'il y a des opérations en
+suspens, `--strict` par défaut) ; **G** = persistance des modifications non
+envoyées, **après F**, à faire seulement si le point 4 prouve une perte — c'est le
+cas (20/20).
 
 **Vérifier :**
 

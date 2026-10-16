@@ -27,7 +27,12 @@
        dossier d'expérience vivant) ;
      ⑥ projets en tombe (`_workspace/state.json` → `deletedProjects`) dont le
        dossier existe encore ;
-     ⑦ taille réelle des `_workspace/datasets/ds_<id>.json`.
+     ⑦ taille réelle des `_workspace/datasets/ds_<id>.json` **et ce qu'elle
+       contient** : combien d'expériences, combien de projets, horodate la plus
+       récente (demandé le 16/10/2026) ;
+     ⑧ **quelles expériences de l'arbre du Drive manquent dans la copie** (leur
+       identifiant est lu dans le `<objet>.json` du dossier ; lectures plafonnées
+       par `--exp-json=N`, défaut 40).
 
    ⛔ LE DATASET D'ADMINISTRATION N'EST PAS TOUCHÉ : tout dossier de dataset dont
       la copie déclare `kind: 'administration'` est SAUTÉ et DIT comme tel.
@@ -100,6 +105,7 @@ const dryPlan = () => {
   console.log('   — récursif, profondeur maximale 8 (TIDY_MAX_DEPTH), au plus 2 000 dossiers (TIDY_MAX_FOLDERS)');
   console.log('⑥ Pour chaque dossier : GET ' + API + '/drive/v3/files/<id>?alt=media  (son _meta.json)');
   console.log('⑦ Copies de dataset : GET ' + API + '/drive/v3/files/<id>?alt=media  (_workspace/datasets/ds_<id>.json)');
+  console.log('   — puis, pour cette copie : GET …?alt=media sur le <objet>.json de chaque dossier d’expérience (⑧, plafonné par --exp-json)');
   console.log('⑧ État de l’espace  : GET ' + API + '/drive/v3/files/<id>?alt=media  (_workspace/state.json → deletedProjects)');
   console.log('');
   console.log('Arbre attendu (le plan, pour comparaison) :');
@@ -263,15 +269,104 @@ if (stateFile) {
 console.log(`⑥ PROJETS EN TOMBE DONT LE DOSSIER EXISTE ENCORE : ${tombstoned.length}${stateFile ? '' : ' (état de l’espace illisible : rien n’est affirmé)'}`);
 tombstoned.slice(0, 10).forEach((n) => console.log(`   · ${n}`));
 
-/* ⑦ taille réelle des ds_<id>.json */
+/* ⑦ taille réelle des ds_<id>.json + CE QU'ELLE CONTIENT (demandé le 16/10/2026) :
+   nombre d'expériences et de projets, horodate la plus récente, et — ⑧ — quelles
+   expériences de l'ARBRE du Drive manquent dans la copie. LECTURE SEULE. */
+import LZString from 'lz-string';
+const EXP_JSON_MAX = Number(ARGS.get('exp-json') || 40);
+/** Le `record` d'une copie : `{kind, at, record}` — `payload` peut être compressé
+ *  (`isCompressed`, lz-string UTF-16), comme le document Firestore. PUR. */
+const copyRecordOf = (rawText) => {
+  let parsed = null;
+  try { parsed = JSON.parse(rawText || ''); } catch { parsed = null; }
+  const rec = parsed && parsed.record ? parsed.record : null;
+  if (!rec) return { parsed, rec: null, payload: null, readError: 'JSON illisible' };
+  let payload = null;
+  try {
+    const raw = rec.isCompressed && typeof rec.payload === 'string'
+      ? LZString.decompressFromUTF16(rec.payload)
+      : rec.payload;
+    payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch { payload = null; }
+  return { parsed, rec, payload, readError: payload ? '' : 'charge illisible' };
+};
+/** Les identifiants d'expérience portés par un dossier d'expérience de l'arbre :
+ *  son `<objet>.json` (ou celui de sa première instance) porte le champ `id`. */
+const experimentJsonOf = (folderNode) => {
+  const kids = filesIn(folderNode.id).filter((f) => f.name.endsWith('.json')
+    && f.name !== '_meta.json' && !f.name.endsWith('.files.json'));
+  if (kids.length) return kids[0];
+  const childFolders = folders.filter((x) => x.parent === folderNode.id);
+  for (const cf of childFolders) {
+    const inner = filesIn(cf.id).filter((f) => f.name.endsWith('.json')
+      && f.name !== '_meta.json' && !f.name.endsWith('.files.json'));
+    if (inner.length) return inner[0];
+  }
+  return null;
+};
+
 console.log('⑦ COPIES DE DATASET (_workspace/datasets/ds_<id>.json) :');
 const dsCopies = files.filter((f) => /^ds_.*\.json$/.test(f.name));
 if (!dsCopies.length) console.log('   aucune copie trouvée');
-dsCopies.forEach((f) => console.log(`   · ${f.name} — ${bytes(f.size)} (${f.size} octets)${Number(f.size) > 8 * 1024 * 1024 ? ' ⚠ AU-DESSUS DE LA LIMITE DE 8 Mo' : ''}`));
+const copyFacts = [];
+for (const f of dsCopies) {
+  const { parsed, rec, payload, readError } = copyRecordOf(await textOf(f.id));
+  const tests = payload && Array.isArray(payload.tests) ? payload.tests : [];
+  const projects = payload && Array.isArray(payload.projects) ? payload.projects : [];
+  const ids = tests.map((t) => String((t && t.id) || '')).filter(Boolean);
+  /* L'horodate la plus récente PORTÉE PAR LA COPIE : `at` du fichier, `updatedAt`
+     du document, et le `date`/`savedAt` le plus récent des expériences. */
+  const stamps = [
+    (parsed && parsed.at) || '',
+    rec && rec.updatedAt ? String(rec.updatedAt) : '',
+    ...tests.map((t) => String((t && (t.savedAt || t.updatedAt || t.date)) || ''))
+  ].filter(Boolean).sort();
+  copyFacts.push({ file: f, ids, tests, projects, readError, rec, payload, latest: stamps[stamps.length - 1] || '' });
+  console.log(`   · ${f.name} — ${bytes(f.size)} (${f.size} octets)${Number(f.size) > 8 * 1024 * 1024 ? ' ⚠ AU-DESSUS DE LA LIMITE DE 8 Mo' : ''}`);
+  if (readError) {
+    console.log(`     ⚠ ${readError} — le contenu de cette copie n'est pas affirmé`);
+    continue;
+  }
+  console.log(`     expériences : ${tests.length} · projets : ${projects.length} · charge compressée : ${rec && rec.isCompressed ? 'oui' : 'non'}`);
+  console.log(`     horodate la plus récente portée : ${copyFacts[copyFacts.length - 1].latest || '(aucune)'} · fichier écrit : ${(parsed && parsed.at) || '(sans at)'}`);
+}
+
+/* ⑧ EXPÉRIENCES DE L'ARBRE ABSENTES DE LA COPIE (l'audit demandé) : pour chaque
+   dossier d'expérience, son JSON porte l'identifiant ; la copie doit le porter.
+   Les lectures sont PLAFONNÉES (`--exp-json=N`, défaut 40) et le compte est dit. */
+console.log('⑧ EXPÉRIENCES DE L’ARBRE ABSENTES DE LA COPIE :');
+if (!dsCopies.length || !copyFacts.some((c) => !c.readError)) {
+  console.log('   (pas de copie lisible : rien n’est affirmé)');
+} else {
+  const treeExps = expFolders.filter((f) => f.path[1] === 'projects');
+  const read = [];
+  for (const f of treeExps.slice(0, EXP_JSON_MAX)) {
+    const node = experimentJsonOf(f);
+    if (!node) { read.push({ path: f.path.join('/'), id: '', note: 'sans JSON d’objet' }); continue; }
+    let id = '';
+    try {
+      const obj = JSON.parse((await textOf(node.id)) || '{}');
+      id = String((obj && obj.id) || '');
+    } catch { id = ''; }
+    read.push({ path: f.path.join('/'), id, note: id ? '' : 'id absent du JSON' });
+  }
+  for (const c of copyFacts) {
+    if (c.readError) { console.log(`   · ${c.file.name} : copie illisible (rien affirmé)`); continue; }
+    const missing = read.filter((x) => x.id && !c.ids.includes(x.id));
+    const nameless = read.filter((x) => !x.id);
+    c.treeMissing = missing.length;
+    console.log(`   · ${c.file.name} : ${missing.length} expérience(s) de l’arbre absente(s) de la copie (${read.length}/${treeExps.length} dossier(s) lu(s)${nameless.length ? `, ${nameless.length} sans identifiant lisible` : ''})`);
+    missing.slice(0, 10).forEach((x) => console.log(`     · ${x.path} (id ${x.id})`));
+    if (treeExps.length > read.length) console.log(`     (reste ${treeExps.length - read.length} dossier(s) non lu(s) — relancer avec --exp-json=${treeExps.length} pour tout lire)`);
+  }
+}
+
 
 console.log('');
 const total = twinPairs.length + dupExp.length + staleJson.length + tombstoned.length;
-console.log(`# VERDICT : ${total === 0
+const missingInCopies = copyFacts.filter((c) => !c.readError)
+  .reduce((n, c) => n + (c.treeMissing || 0), 0);
+console.log(`# VERDICT : ${total === 0 && missingInCopies === 0
   ? 'aucun jumeau, aucun reste de renommage, aucune tombe pendante'
   : 'des lignes sont à réparer (voir ci-dessus) — la FASE 4 s’en charge, par déplacements et corbeille SEULEMENT.'}`);
 console.log(`# Rien n’a été écrit ni supprimé : ${READS} GET, aucune autre requête.`);

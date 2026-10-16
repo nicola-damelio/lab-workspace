@@ -137,21 +137,47 @@ finché l'app non viene ricaricata. [eseguito] ⑦.
 
 Comando: `node _drive_two_pc_random_test.mjs --seeds=20`
 
-| fattore | gemelle | assenti | fuori piano | esperienze perdute | divergenza 2 PC | non idempotente | scenari sporchi |
-|---|---|---|---|---|---|---|---|
-| **controllo** (1 PC, nessun ritardo, nessun errore) | 0 | 15 | 0 | 20 | 0 | 0 | 20/20 |
-| **controllo 2 PC** (idem, due posti) | 0 | 17 | 15 | 19 | 19 | 0 | 19/20 |
-| **ritardo di coerenza 1 s** | **20** | 0 | 15 | 19 | 19 | 19 | 20/20 |
-| **ritardo di coerenza 10 s** | **20** | 0 | 15 | 19 | 19 | 19 | 20/20 |
-| **errori Drive 1 su 5** | 1 | 18 | 11 | 19 | 19 | 15 | 19/20 |
-| **scheda chiusa a metà** | 0 | 17 | 16 | 20 | 20 | 0 | 20/20 |
-| **rinomine lente** | 1 | 15 | 17 | 19 | 19 | 3 | 19/20 |
+> ⚠ **Questa tabella è stata RIFATTA il 16/10/2026**, dopo aver corretto un difetto
+> del **finto** Drive (vedi §8.0): il suo lettore di query perdeva tutte le clausole
+> dopo la prima, quindi `name='x' and '<dossier>' in parents` **ignorava il
+> dossier** e l'adozione per identità leggeva il `_meta.json` di un altro dossier.
+> I numeri qui sotto sono quelli corretti; le differenze rispetto alla prima
+> versione sono nell'elenco che segue la tabella.
 
-Lettura: **il solo controllo è già sporco** (assenti/perduti) — quindi non è una
-corsa fra posti, è il **percorso di pubblicazione** (N1). Il **ritardo di
-coerenza** è ciò che rende i **gemelli sistematici** (0 → 20/20). Gli errori
-peggiorano gli "assenti". La scheda chiusa a metà e le due postazioni rendono la
-divergenza fra i due schermi **certa**.
+| fattore | gemelle | assenti | fuori piano | perdute | copia illeggibile | perse in locale | divergenza 2 PC | resto di rinomina | non idempotente | scenari sporchi |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **controllo** (1 PC, nessun ritardo, nessun errore) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0/20** |
+| **controllo 2 PC** (idem, due posti) | 0 | 0 | 15 | 18 | 0 | 0 | **19** | 0 | 0 | 19/20 |
+| **ritardo di coerenza 1 s** | **20** | 0 | 15 | 0 | 20 | 0 | 19 | 0 | **19** | 20/20 |
+| **ritardo di coerenza 10 s** | **20** | 0 | 15 | 0 | 20 | 0 | 19 | 0 | **19** | 20/20 |
+| **errori Drive 1 su 5** | 0 | **17** | 13 | 5 | 15 | 0 | 19 | 0 | 17 | 19/20 |
+| **scheda chiusa a metà** | 0 | 0 | 16 | 18 | 0 | 0 | **20** | 0 | 0 | 20/20 |
+| **rinomine lente** (modello solo) | 1 | 0 | 17 | 11 | 7 | 0 | 18 | 0 | 3 | 19/20 |
+| **rinomine lente + uscita dal campo** (il gesto vero) | 2 | 2 | 17 | 17 | 1 | 0 | 18 | 0 | 3 | 19/20 |
+| **scheda chiusa PRIMA dell'autosave** (attese reali) | 0 | 20 | 0 | 0 | 20 | **20** | 0 | 0 | 20 | 20/20 |
+| **A ha modifiche non inviate, B salva** | 0 | 0 | 16 | **20** | 0 | 0 | **20** | 0 | 0 | 20/20 |
+
+Lettura (dopo la correzione):
+
+* **il controllo è PULITO (0/20)**: il percorso di pubblicazione *da solo*, con un
+  solo poste e senza ritardi, **non** crea più nulla. La conclusione precedente
+  («il controllo è già sporco, quindi il difetto è nel percorso di pubblicazione»)
+  **non vale più**: era un artefatto del finto Drive.
+* **il ritardo di coerenza** è ciò che rende i **gemelli sistematici** (0 → 20/20):
+  è la causa misurata dei doppioni, non il rinominare in sé.
+* **due postazioni** rendono certa la **divergenza fra i due schermi** (19–20/20) e
+  la **perdita di esperienze dalla copia** (18–20/20 quando la copia è leggibile):
+  è il «vince l'ultimo» della copia (§N2), non una corsa sul nome.
+* **il gesto vero di rinomina** (uscita dal campo, `activeTestModule.jsx:545-591`)
+  **non migliora nulla**: gemelle 2/20 invece di 1/20, assenti 2/20 invece di 0.
+  Quindi NON è «il gesto che mancava al harnais» a spiegare il Drive reale (§8.2).
+* **la scheda chiusa prima dell'autosave perde l'esperienza ANCHE nel magazzino
+  locale: 20/20** (§8.4).
+* **A con modifiche non inviate mentre B salva**: 20/20 di esperienze assenti dalla
+  copia e 20/20 di divergenza fra i due schermi (§8.4).
+* la colonna **«copia illeggibile»** è nuova e dice quando la misura «perdute» non è
+  stata fatta (col ritardo di coerenza la ricerca del file appena scritto non lo
+  vede ancora: la lettura va dichiarata, non contata come perdita).
 
 ---
 
@@ -177,21 +203,39 @@ L'ordine cambia rispetto alla diagnosi iniziale, perché **N1** (rinominare
 duplica) è più grave di quanto previsto ed è nel percorso di **ogni**
 salvataggio, mentre D4 (merge fra posti) si vede meno spesso.
 
-**FASE 1 — protezioni immediate (basso rischio).** Prima di tutto il *fermo* su
-N1, perché è quello che crea i doppioni:
-1. **`publishDatasetStructure` non deve creare un dossier quando un oggetto
-   equivalente esiste già** sotto un altro nome: o adotta-rinomina per
-   identificativo (`extra.id`, come già fa `pickRenamedSibling`), o **non fa
-   nulla** su un oggetto che non riconosce — mai un secondo dossier. È il punto
-   che ferma «cartelle doppie» e «esperimenti che spariscono».
-2. Nome di default del nuovo esperimento = primo `Test N` **libero**; rifiuto (o
-   suffisso) di un nome già usato nello stesso progetto; slug unico nel genitore.
-3. Cancellazione: conferma che elenca **cosa** sparisce (mai per solo nome).
-4. Il nome entra nel modello **alla conferma** (blur/Invio), non a ogni tasto.
-5. Stato di sincronizzazione sempre visibile + banner persistente oltre 8 MB;
-   nessun `.catch(() => {})` sulle operazioni Drive (log + messaggio).
-6. Prima di tutto: `--strict` diventa il default dei due test nuovi.
-   *Riferimenti:* sezione «R» e ①④⑥ di `_drive_sync_repro_test.mjs`.
+**FASE 1 — protezioni immediate (basso rischio).** Ordine **A → G** (richiesto il
+16/10/2026). **A–F invariati**; **G** è NUOVO, in fondo, e si implementa **solo se
+il punto 4 dimostra una perdita di dati** (dimostrata: §8.4, 20/20 seed).
+
+* **A.** **`publishDatasetStructure` non deve creare un dossier quando un oggetto
+  equivalente esiste già** sotto un altro nome: o adotta-rinomina per
+  identificativo (`extra.id`, come già fa `pickRenamedSibling`), o **non fa
+  nulla** su un oggetto che non riconosce — mai un secondo dossier. È il punto
+  che ferma «cartelle doppie» e «esperimenti che spariscono».
+  *Precisazione del 16/10/2026 (§8.2):* l'identità è scritta **solo sull'ultimo
+  livello** del piano (`driveStructure.js:643-646`), quindi **un'esperienza con
+  istanza o sezione NON ha identità**: A deve scriverla sul dossier
+  dell'esperienza (o su ogni livello), altrimenti l'adozione non può funzionare
+  per la forma più comune.
+* **B.** Nome di default del nuovo esperimento = primo `Test N` **libero**; rifiuto
+  (o suffisso) di un nome già usato nello stesso progetto; slug unico nel genitore.
+* **C.** Cancellazione: conferma che elenca **cosa** sparisce (mai per solo nome).
+* **D.** Il nome entra nel modello **alla conferma** (blur/Invio), non a ogni tasto.
+* **E.** **Stato di sincronizzazione sempre visibile**: «N modifiche da inviare» e
+  **avviso alla chiusura solo se ci sono operazioni in sospeso** (nel frattempo è
+  questo che basta, come richiesto); banner persistente oltre 8 MB oltre 8 MB
+  (oggi solo un `console.warn`, §Q8) e **nessun `.catch(() => {})`** sulle
+  operazioni Drive (log + messaggio). *Precisazione:* la copia reale pesa qualche
+  kB (§8.1), quindi il banner oltre 8 MB è una rete di sicurezza teorica, non il
+  punto urgente.
+* **F.** `--strict` diventa il default dei due test nuovi.
+  *Riferimenti:* sezione «R» e ①④⑥ di `_drive_sync_repro_test.mjs`.
+* **G.** **Persistenza delle modifiche non ancora inviate** — *solo se il punto 4
+  dimostra una perdita*, e la dimostra (§8.4: scheda chiusa durante le attese →
+  perdita **anche locale**, 20/20 seed). Quindi: flag «da pubblicare» + scrittura
+  del magazzino locale **prima** delle attese di `runSave` (o scrittura sincrona su
+  `pagehide`), coda persistente (IndexedDB), `keepalive` sulle POST di chiusura.
+  *Prova:* fattore `chiusura-precoce` di `_drive_two_pc_random_test.mjs`.
 
 **FASE 2 — identità stabili e un solo riconciliatore.** Come da tua traccia:
 `experimentId` e `projectId` stabili, `appProperties {portalId, kind, datasetId}`
@@ -236,3 +280,183 @@ npx vite build                             # nessuna riga di src/ toccata ⇒ id
 * **Su tua richiesta (punto 5)**: i file temporanei della ricognizione sono stati
   eliminati solo dopo averli verificati **non tracciati** (`git ls-files`), senza
   glob larghi. `_z_tok.txt` è sparito; l'audit non stampa alcuna credenziale.
+* **16/10/2026 — corretto un difetto del FINTO Drive** (`_harness/fake-drive.mjs`,
+  `splitClauses`: `String(...)` rendeva l'indice una stringa e la scansione si
+  fermava alla prima clausola) e rimisurato tutto; aggiunti i fattori
+  `renommage-champ`, `chiusura-precoce`, `a-non-inviato-b-salva` e, nella réplica
+  dell'autosave, il **magazzino locale** (App.jsx:4177-4185) con la finestra
+  d'attesa prima dell'eccezione (`hooksBeforeWrite` / `killDuringSave` /
+  `reopenSession`). Sempre **nessuna riga di `src/` toccata**. Vedi §8.
+
+---
+
+## 8. Prove manuali sul Drive reale (16/10/2026) — risposte
+
+### 8.0 Prima di tutto: un difetto del **finto** Drive (e cosa invalida)
+
+Il lettore delle query del finto Drive (`_harness/fake-drive.mjs`, funzione
+`splitClauses`) faceva `i += String(lunghezza - 1)`: `i` diventava la **stringa**
+`"174"` e la scansione si fermava lì. **Tutte le clausole dopo la prima erano
+perse**: `name='_meta.json' and '<dossier>' in parents and trashed=false` veniva
+letto come *solo* `name='_meta.json'` ⇒ la ricerca **ignorava il dossier** e
+rendeva «il primo del nome» **ovunque sul Drive**.
+
+Conseguenza diretta: `readMeta`/`findFolder` (driveStructure.js:920-934, 1263,
+1266) leggevano il `_meta.json` di un **altro** dossier ⇒ l'adozione per identità
+(`pickRenamedSibling`, 878-885) poteva adottare o mancare l'oggetto sbagliato.
+Corretto il 16/10/2026 (una riga, senza `String(...)`); le prove che seguono sono
+**rifatte** con il finto Drive corretto. Cosa cambia, in breve:
+
+| prova | prima (finto Drive rotto) | dopo la correzione |
+|---|---|---|
+| run di **controllo** (1 poste, nessun ritardo) | 20/20 scenari sporchi | **0/20 — pulito** |
+| scenario «R» (rinomina) | nuovo dossier **VUOTO**, JSON del nuovo stato **nell'anziano** | nuovo dossier **con i suoi file**; l'anziano resta (duplicato) |
+| spostamento d'esperienza (R) | «non produce nulla» | **funziona** (`projects/Autre/Beta` esiste) |
+| cassetto sulla stessa sessione (Q7, ①) | `_meta` condivisi, esiti falsati | letto il `_meta.json` giusto |
+
+La conclusione «il difetto è nel percorso di pubblicazione» **non regge più**: con
+un poste e senza ritardi la pubblicazione non produce difetti. Restano veri (e
+rimisurati, §4): **ritardo di coerenza → gemelle 20/20**, **due postazioni →
+divergenza 19–20/20 e copia che perde 18–20/20**, **rinomina → doppioni per gli
+oggetti senza identità nel piano** (§8.2).
+
+### 8.1 (punto 1) La copia pesa qualche kB — e cosa contiene
+
+* La copia è **un solo file per dataset**, scritta **in blocco**: `writeDatasetCopy`
+  (`workspaceDrive.js:421-442`) non rilegge né fonde; oltre
+  `MAX_DATASET_COPY_BYTES = 8 MB` (`workspaceDrive.js:416`) **non scrive** e lo dice
+  **solo** nella console. Con qualche kB di copia reale, la soglia degli 8 MB è
+  **teorica**: non è il punto urgente della FASE 1 (E resta, come rete).
+* **Contiene il nome dell'esperimento creato in fretta?** SÌ, **se** un
+  salvataggio è arrivato in fondo: la copia porta `updatedPayload.payload =
+  JSON.stringify(rawData)` con `rawData = { ...latestDataRef.current,
+  ...cloudProjectsPayload() }` (`App.jsx:4100-4128`), cioè **il modello del
+  momento**. Quindi: nome nella copia ⇒ il salvataggio è stato completato dopo la
+  creazione; nome assente ⇒ o il salvataggio non è mai partito (vedi §8.4) o la
+  copia è stata **sovrascritta da un altro poste** (N2, §4).
+
+### 8.2 (punto 2) Rinomina lenta: perché sul Drive reale NON resta «Prov» — **punto declassato**
+
+**Declassato a «non confermato»** come richiesto. Ecco il perché misurato, che è
+più preciso della spiegazione «mancava il gesto di uscita dal campo»:
+
+1. **Il gesto c'è già nel harnais** (Q6): l'app scrive il nome nel modello a ogni
+   battuta (16 punti, es. `definitionsManagers.jsx:104,216,964,972`,
+   `projectDetailModule.jsx:3502`) e l'autosave pubblica quel che il modello porta.
+   Misurato: tre nomi parziali (`Exp`, `Exp 1`, `Exp 10`) ⇒ **tre dossier** per un
+   solo oggetto, e il gesto di conferma (`renameDriveFilesFor`, `onBlur` di
+   `activeTestModule.jsx:545-591`, `projectDetailModule.jsx:4613-4622`) **non li
+   riprende**. Aggiunto come fattore `renommage-champ`: **non migliora** (gemelle
+   2/20 contro 1/20).
+2. **L'identità è scritta SOLO sull'ULTIMO livello del piano.** In
+   `driveStructure.js:639-648`, `addLevels(levels, extra)` mette `extra` (quindi
+   `extra.id`) **solo** su `isLast ? extra : null`. Provato (§8.0, sonda):
+   `projects/Proj/Alpha` (esperienza **con istanza `i1` + sezione `data`)` →
+   `extraId = —` (nessuna identità!), mentre `projects/Proj/Alpha/i1` → `extraId =
+   e1` (l'id dell'**esperienza**, scritto sul dossier dell'**istanza**) e
+   `projects/Proj/Gamma` (**senza istanza né sezione**) → `extraId = e2`.
+3. Quindi **due comportamenti diversi**, tutti e due riprodotti:
+   * oggetto **senza** istanza/sezione (o **progetto**, `driveStructure.js:662`):
+     il dossier porta l'identità ⇒ alla rinomina viene **adottato e rinominato in
+     place** ⇒ **non resta nulla** dell'oggetto parziale (misurato: `Gamma → Delta`,
+     un solo dossier);
+   * esperienza **con** istanza o sezione (la forma più comune): nessuna identità ⇒
+     **un dossier nuovo a ogni nome pubblicato** (misurato: `Alpha`+`Beta`, e Q6
+     `Exp`+`Exp_1`+`Exp_10`).
+
+**Conclusione**: la tua prova manuale (nessun «Prov» rimasto) è compatibile con il
+caso 1 (oggetto che porta l'identità), non con il caso 2. Il difetto «un nome
+parziale lascia un dossier» **resta aperto** per il caso 2 e va riprovato su
+un'esperienza **con istanza o sezione** prima di dichiararlo risolto. La causa
+meccanica è nella riga 645 (`isLast ? extra : null`), ed è la precisazione del
+punto **A** della FASE 1.
+
+### 8.3 (punto 3) Gli esperimenti comparsi «dopo un po'»: cosa li completa e con che ritardo
+
+Misure e letture, in ordine di certezza:
+
+1. **Il percorso che scrive è uno solo**: `runSave` (`App.jsx:4083-4197`) è chiamato
+   dal **minutore di 1,5 s** (`App.jsx:4199`) e, alla chiusura della scheda, da
+   `flushPendingSave` (`App.jsx:4205-4216`) che è agganciato a
+   `pagehide` e a `visibilitychange` (`App.jsx:4220-4221`): dentro ci sono la
+   pubblicazione dell'albero (`4147`), la copia del dataset (`4134`, che ha un
+   **proprio ritardo di ~8 s**, `App.jsx:5420-5429`, e un proprio flush a
+   `5436-5447`) e la scrittura del **magazzino locale** (`4185`).
+2. **Nel `runSave` ci sono DUE attese PRIMA di qualunque scrittura**:
+   `guardDistantExperiments` (`4110` — una **lettura di rete** su Firestore) e
+   `compressDatasetForSave` (`4116` — compressione fuori dal filo principale,
+   0,9 s per 6 MB). Quindi la chiusura non «ripulisce» in modo sincrono.
+3. **Non c'è nessun `keepalive` in tutto `src/`** (grep: **0 occorrenze**): le
+   richieste partite non sono protette dalla morte della pagina. Il browser è
+   libero di interromperle.
+4. **Ritardi possibili** (limiti, non statistiche del tuo Drive): pubblicazione
+   **≥ 1,5 s** dopo l'ultima modifica (minutore) **+** la lettura condivisa **+** la
+   compressione **+** il tempo delle N richieste della pubblicazione; copia
+   **≤ ~8 s** dall'ultima modifica (più il suo flush alla chiusura).
+
+Perciò «sono comparsi dopo» può avere **tre cause distinte**, e il tuo dubbio
+(«portale riaperto nel frattempo ?») è esattamente la variabile da sciogliere:
+
+* **richieste già partite** che il browser ha lasciato finire (possibile, non
+  garantito: punto 3);
+* **una nuova sessione** che risalva: la pubblicazione esiste **solo** dentro
+  `runSave` (unico chiamante: `App.jsx:4147`), quindi nulla «ripara» all'apertura
+  se nessuna modifica avviene; ma l'apertura di un dataset può riportare in stato
+  comunque una modifica (fusione/guardie) e far ripartire il minutore;
+* **solo l'interfaccia di Drive** che si aggiorna in ritardo (non misurabile da
+  qui).
+
+### 8.4 (punto 4) Il caso peggiore: scheda chiusa entro 1,5 s — **perdita dimostrata**
+
+* **Dove viene scritto lo store locale**: **solo dentro `runSave`**, alla riga
+  `App.jsx:4185` (`localStorage.setItem(LOCAL_STORAGE_KEY, …)`, con
+  `LOCAL_STORAGE_KEY = 'lab_datasets_local_v2'`, `src/data/constants.js:13`) e,
+  per le basi di amministrazione, in un effetto separato (`4292-4300`). Le altre
+  scritture del medesimo store (`5258/5263`, `5370/5378`, `5809/5813`, `5937/5939`,
+  `6045/6052`) riguardano **voci** (creazione/rinomina/permessi), non il contenuto.
+  ⇒ **Lo store non è scritto «subito»**: è scritto **dopo le due attese** del
+  `runSave`.
+* **Prova eseguita** (nuovo fattore `chiusura-precoce`, 20 seed): si crea
+  un'esperienza, la scheda muore **durante le attese** che precedono la scrittura;
+  poi si riapre. Risultato: **20/20 seed** con l'esperienza **assente anche dal
+  magazzino locale** (`magazzino locale: []`) e **copia Drive `null`**. Cioè: la
+  perdita è **totale**, locale compresa — non solo «non ancora pubblicata».
+* **Secondo caso** (fattore `a-non-inviato-b-salva`, 20 seed): A tiene due
+  esperienze **non inviate** (minutore annullato), B salva e pubblica la sua copia,
+  poi A riparte. Risultato: **20/20** con esperienze **assenti dalla copia** e
+  **20/20** con i **due schermi divergenti**. La copia è un file solo, scritto in
+  blocco (`workspaceDrive.js:421-442`): **chi scrive per ultimo vince**, senza
+  avviso.
+* ⇒ **Il punto 4 dimostra una perdita** (dati non inviati persi alla chiusura, e
+  sovrascrittura della copia fra poste): la **G** della FASE 1 è giustificata. Nel
+  frattempo — come da tua indicazione — basta **E**: stato di sincronizzazione
+  visibile («N modifiche da inviare») e avviso alla chiusura **solo** se ci sono
+  operazioni in sospeso.
+
+### 8.5 (punto 5) L'audit esteso: ⑦ e ⑧ (sempre in sola lettura)
+
+`scripts/drive-audit-live.mjs` ora, per **ogni** `_workspace/datasets/ds_<id>.json`:
+
+* **⑦** — dimensione reale, **numero di esperimenti**, **numero di progetti**,
+  **data più recente portata dalla copia** (`at` del file, `updatedAt` del
+  documento, `savedAt`/`date` più recente fra le esperienze), e se la carica è
+  **compressa** (`lz-string`, come il documento Firestore). Una copia **illeggibile**
+  è **detta** («il contenuto di questa copia non è affermato»), non contata come zero;
+* **⑧** — **quante esperienze dell'albero Drive mancano nella copia**: per ogni
+  dossier di esperienza si legge il suo `<oggetto>.json` (o quello della prima
+  istanza) e si confronta il campo `id` con quelli della copia.
+  Le letture sono **plafonate** (`--exp-json=N`, default 40) e il conteggio residuo
+  è stampato; il verdetto finale tiene conto anche di questo numero.
+* Il file resta **senza scritture** (guardia interna: nessun POST/PATCH/DELETE,
+  nessuna query sulla corba) e in `scripts/` (mai eseguito da `_run_all.cjs`).
+  Comando: `node scripts/drive-audit-live.mjs --dataset="NOME ESATTO"` (piano) e
+  `--go` per la lettura reale — **attende ancora il tuo OK**.
+
+### 8.6 (punto 6) FASE 1 in ordine A–G
+
+Vedi §6: **A–F invariati**, **G** nuovo in fondo (persistenza delle modifiche non
+inviate), da fare **solo se il punto 4 dimostra una perdita** — dimostrata (20/20).
+Nel frattempo: **stato di sincronizzazione visibile** con «N modifiche da inviare»
+e **avviso alla chiusura solo se ci sono operazioni in sospeso** (entrambi dentro
+**E**).
+

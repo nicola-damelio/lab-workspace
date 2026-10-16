@@ -72,7 +72,14 @@ const splitClauses = (q) => {
     if (!inQ && depth === 0 && /\s/.test(ch) && /^\s+and\s+/i.test(q.slice(i))) {
       out.push(cur.trim());
       cur = '';
-      i += String(q.slice(i).match(/^\s+and\s+/i)[0].length - 1);
+      /* ⚠ SANS `String(…)` : `i += String(5 - 1)` fait `i + "4"` — i devient la
+         CHAÎNE « 174 » et la boucle s'arrête là. Toutes les clauses APRÈS la
+         première étaient donc perdues (constaté le 16/10/2026 sur
+         `name='_meta.json' and '<dossier>' in parents and trashed=false` :
+         le dossier était ignoré — le faux Drive rendait « le premier du nom »
+         n'importe où, et l'adoption par identité pouvait lire la description
+         d'un AUTRE dossier. Les résultats d'alors sont refaits depuis.) */
+      i += q.slice(i).match(/^\s+and\s+/i)[0].length - 1;
       continue;
     }
     cur += ch;

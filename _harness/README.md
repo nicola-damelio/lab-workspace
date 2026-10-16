@@ -17,6 +17,18 @@
    `pageToken`), la reprise sur 401, le retry réseau, la création/renommage/
    déplacement/corbeille, les empreintes, le miroir, la copie du dataset.
 
+   ⚠ **16/10/2026 — un défaut du faux Drive a été corrigé** (`splitClauses` :
+   `i += String(longueur - 1)` faisait de `i` la CHAÎNE « 174 », la boucle
+   s'arrêtait et **toutes les clauses après la première étaient perdues** : une
+   recherche `name='x' and '<dossier>' in parents` ignorait le dossier, donc
+   « le premier du nom » n'importe où était rendu — et l'adoption par identité
+   lisait la description d'un AUTRE dossier). Les résultats d'avant cette date
+   sont donc refaits. `createAutosaveReplica` sait maintenant ce qui précède
+   l'écriture LOCALE (`hooksBeforeWrite`, `killDuringSave`, `reopenSession`,
+   `localExperiments`, `storeKey` — App.jsx:4110/4116/4177-4185), et la copie du
+   dataset s'écrit DANS le contexte du poste (sinon sa temporisation rendait les
+   globaux et la copie partait « not connected »).
+
    ## Usage
 
    ```js

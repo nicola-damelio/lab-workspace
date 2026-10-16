@@ -188,25 +188,74 @@ export const createHarness = async ({
      • 4220  `window.addEventListener('pagehide', flushPendingSave)` ;
      • 4221  `document.addEventListener('visibilitychange', …)` si caché (4218).
    La charge vient du TEST (`payloadFn`) : c'est `latestDataRef.current` +
-   `cloudProjectsPayload()` (App.jsx:4100). */
+   `cloudProjectsPayload()` (App.jsx:4100).
+
+   ⚠ LA RÉPLIQUE SAIT AUSSI CE QUI SE PASSE AVANT L'ÉCRITURE LOCALE (ajouté le
+   16/10/2026, questions 3 et 4). Dans App.jsx, la publication (4147) et
+   l'écriture du magasin du poste (4177-4185) arrivent APRÈS deux attentes :
+      • 4110 `guardDistantExperiments` — une LECTURE RÉSEAU (Firestore) ;
+      • 4116 `compressDatasetForSave` — la compression, hors fil principal.
+   Un onglet fermé pendant ces attentes est détruit AVANT que quoi que ce soit
+   ne soit écrit — `dead` le dit, et le salvatage se TAIT (comme App.jsx quand la
+   page n'existe plus). `hooksBeforeWrite` rend cette fenêtre OBSERVABLE : le test
+   fournit ses propres attentes, donc aucune course d'horloge. */
 export const createAutosaveReplica = ({
-  pc, payloadFn, datasetId = '', delayMs = 1500
+  pc, payloadFn, datasetId = '', delayMs = 1500,
+  /* Le magasin LOCAL du poste (App.jsx:4177-4185 → `LOCAL_STORAGE_KEY`). */
+  storeKey = 'lab_datasets_local_v2',
+  /* Les attentes qui précèdent l'écriture locale (voir ci-dessus). */
+  hooksBeforeWrite = []
 }) => {
   const { structure, copyMirror, workspace } = pc.mods;
   let pending = null;
   let timer = null;
-  const report = { saves: 0, published: 0, errors: [], status: 'idle', lastPublish: null };
+  let dead = false;          // l'onglet a été DÉTRUIT pendant un salvatage
+  let killTicket = 0;        // une « mort » par onglet fermé (voir killDuringSave)
+  const report = { saves: 0, published: 0, errors: [], status: 'idle', lastPublish: null, localWrites: 0 };
   const copyMirrorRef = copyMirror.createDatasetCopyMirror({
     // App.jsx:5426 — « write: (body) => writeDatasetCopy(body).catch(() => null) »
-    write: (body) => workspace.writeDatasetCopy(body).catch(() => null)
+    /* ⚠ LE MIROIR ÉCRIT EN DIFFÉRÉ (son propre délai) : dans l'app c'est le
+       contexte du NAVIGATEUR, ici il doit être celui du POSTE — sinon la
+       temporisation rend les globaux (`localStorage` = jeton, `fetch`) et la
+       copie part avec « Google Drive is not connected » alors que le poste est
+       connecté (constaté le 16/10/2026 : la copie illisible dans 20/20 des
+       scénarios longs, donc la mesure « experiences perdues » muette). */
+    write: (body) => pc.do(() => workspace.writeDatasetCopy(body)).catch(() => null)
   });
+
+  /** L'écriture du magasin LOCAL du poste (App.jsx:4175-4185). Rend le nombre
+   *  d'expériences que la copie locale porte après l'écriture. */
+  const writeLocalStore = (updatedPayload) => {
+    let stored = [];
+    try { stored = JSON.parse(globalThis.localStorage.getItem(storeKey) || '[]'); } catch { stored = []; }
+    if (!Array.isArray(stored)) stored = [];
+    const idx = stored.findIndex((e) => e && String(e.id) === String(datasetId));
+    if (idx >= 0) stored[idx] = { ...stored[idx], ...updatedPayload };
+    else stored.push({ id: datasetId, ...updatedPayload });
+    globalThis.localStorage.setItem(storeKey, JSON.stringify(stored));
+    report.localWrites += 1;
+    return stored.length;
+  };
 
   const runSave = async (urgent = false) => {
     if (timer) { clearTimeout(timer); timer = null; }
     if (pending !== runSave) return;      // App.jsx:4086
     pending = null;
     report.saves += 1;
+    /* Le ticket de CETTE tentative : si l'onglet meurt plus tard (`killDuringSave`
+       incrémente le ticket), l'attente en cours se tait au lieu d'écrire après la
+       mort de la page — un onglet rouvert ne « ressuscite » jamais ce salvatage. */
+    const myTicket = killTicket;
+    const killed = () => killTicket !== myTicket;
     if (!urgent) await Promise.resolve();  // ≈ yieldToPaint (App.jsx:4099)
+    /* 🖐 LES ATTENTES D'AVANT L'ÉCRITURE (App.jsx:4110 puis 4116) : la relecture
+       réseau de la copie partagée et la compression hors fil. C'est LÀ qu'un
+       onglet fermé meurt : rien n'a encore été écrit, ni sur le Drive ni dans le
+       magasin du poste. */
+    for (const hook of hooksBeforeWrite) {
+      await hook();
+      if (killed()) { report.diedIn = 'awaits'; return; }
+    }
     const data = payloadFn();              // App.jsx:4100
     const updatedPayload = {
       title: data.datasetTitle || 'Untitled Dataset',
@@ -218,6 +267,11 @@ export const createAutosaveReplica = ({
       isCompressed: false
     };
     copyMirrorRef.schedule(datasetId, updatedPayload);   // App.jsx:4134
+    /* App.jsx:4175-4185 — le magasin LOCAL du poste. C'est ce que la réouverture
+       relit : ni Firestore ni le Drive ne sont nécessaires pour le retrouver. */
+    writeLocalStore(updatedPayload);
+    if (killed()) { report.diedIn = 'local-write'; return; }
+
     // App.jsx:4147 — la publication n'est pas ATTENDUE par l'app ; on la garde
     // pour pouvoir dire, à la fin, ce qu'elle a écrit.
     report.lastPublish = structure.publishDatasetStructure({
@@ -239,10 +293,30 @@ export const createAutosaveReplica = ({
     await report.lastPublish;
   };
 
+  /** Le magasin LOCAL du poste, relu (App.jsx:5809-5813 : c'est ainsi que la
+   *  liste des datasets revient à la réouverture). */
+  const readLocalStore = () => {
+    try {
+      const v = JSON.parse(pc.store.getItem(storeKey) || '[]');
+      return Array.isArray(v) ? v : [];
+    } catch { return []; }
+  };
+  /** CE QUE LA RÉOUVERTURE TROUVE : les expériences du magasin local. */
+  const localExperiments = () => {
+    const rec = readLocalStore().find((e) => e && String(e.id) === String(datasetId)) || null;
+    if (!rec || !rec.payload) return { model: null, ids: [], names: [] };
+    try {
+      const model = JSON.parse(rec.payload);
+      const tests = Array.isArray(model.tests) ? model.tests : [];
+      return { model, ids: tests.map((t) => t.id), names: tests.map((t) => t.name) };
+    } catch { return { model: null, ids: [], names: [] }; }
+  };
+
   return {
     report,
     /** Une modification du modèle repart l'effet d'App.jsx (le minuteur). */
     schedule() {
+      if (dead) return;                    // l'onglet n'existe plus
       report.status = 'saving';
       if (timer) clearTimeout(timer);
       pending = runSave;
@@ -253,7 +327,7 @@ export const createAutosaveReplica = ({
     /** `pagehide` / passage en arrière-plan (App.jsx:4205-4221). */
     async flush() {
       await pc.do(async () => {
-        if (!pending) return;
+        if (dead || !pending) return;      // page détruite : rien ne part
         /* ⚠ App.jsx n'ATTEND pas ce `runSave(true)` — dans un navigateur il n'y
            a rien à attendre. ICI, si : le processus est unique, et les globaux
            du poste (`localStorage`, `fetch`) sont rendus à la fin de `pc.do` ;
@@ -273,6 +347,25 @@ export const createAutosaveReplica = ({
       timer = null;
       pending = null;
     },
+    /** L'ONGLET MEURT PENDANT LE SALVATAGE : il est détruit pendant les attentes
+     *  d'avant l'écriture (App.jsx:4110 `guardDistantExperiments`, 4116 la
+     *  compression) — le salvatage en cours se TAIT : ni magasin local, ni Drive,
+     *  ni copie. C'est le pire cas de la question 4. */
+    killDuringSave() {
+      dead = true;
+      killTicket += 1;
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+    /** L'ONGLET ROUVERT (le même poste, une session neuve) : la page vit de
+     *  nouveau, et ce que la mort n'a pas écrit reste perdu. Rend ce que la
+     *  réouverture trouve dans le magasin local. */
+    reopenSession() {
+      dead = false;
+      return localExperiments();
+    },
+    isDead: () => dead,
+    readLocalStore,
+    localExperiments,
     /** Ce que `pagehide` fait dans la vraie app : pousser la copie du dataset
      *  (`datasetCopyMirrorRef.current.flush()`, App.jsx:4215). Le miroir a son
      *  propre délai ; sans ce geste, un poste qui ferme juste après une
