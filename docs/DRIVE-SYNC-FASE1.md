@@ -370,6 +370,16 @@ pesante (coda su IndexedDB + `keepalive`) resta in fondo, dopo F.
 
 ### 5.1 — A — L'identità: `appProperties` su ogni oggetto, l'`id` su ogni livello
 
+> **CONSEGNATO IL 17/10/2026 — la parte « identità su ogni livello ».** `addLevels`
+> écrit `extra.id` sur **chaque** niveau de l'objet (le projet garde le sien) et les
+> textes de section le portent aussi (`addLevels(sLevels, { id })`) : la renommée d'une
+> expérience AVEC instance+section est réparée — un seul dossier, le même identifiant
+> Drive, l'ancien nom disparaît. Preuve : `node _drive_plan_identity_test.mjs --strict`
+> → **0** ; voir `docs/DRIVE-MIRROR.md` (« FASE 1 A — l'identité va sur CHAQUE niveau »).
+> **Reste ouvert** : la seconde moitié de A (`appProperties` écrits par l'app + l'IO
+> `setProperties`), et le DÉPLACEMENT d'un projet à l'autre (l'adoption ne regarde que
+> les frères du nouveau parent) — mesuré dans `_drive_sync_repro_test.mjs` §R.
+
 **Cosa dice il codice d'oggi** `[letto]`. Il piano del mirror — `datasetMirrorPlan`
 (`driveStructure.js:596`) — è una funzione **pura**: entra il dataset, escono `folders` e
 `files` con i loro `extra`. L'identità la scrive **solo** nei tre punti in cui c'è

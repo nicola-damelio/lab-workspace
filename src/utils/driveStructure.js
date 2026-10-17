@@ -635,14 +635,27 @@ export const datasetMirrorPlan = ({
     addFile({ path, name, body: jsonText(payload), kind });
   const addText = (path, name, value, kind = 'text') =>
     addFile({ path, name, mimeType: 'text/html; charset=utf-8', body: String(value), kind });
-  /** Ajoute TOUT un chemin de niveaux (les parents d'abord). Rend le chemin. */
+  /** Ajoute TOUT un chemin de niveaux (les parents d'abord). Rend le chemin.
+   *
+   *  ⚠ L'IDENTITÉ VA SUR **CHAQUE** NIVEAU DE L'OBJET, PAS SEULEMENT SUR LE
+   *  DERNIER. Avant, `isLast ? extra : null` laissait le dossier de
+   *  l'EXPÉRIENCE sans `extra.id` dès qu'elle avait une instance ou une section
+   *  (l'id finissait sur le dossier de l'instance) : le renommer fabriquait un
+   *  dossier au nouveau nom et laissait l'ancien derrière lui, pour toujours.
+   *  Le PROJET, lui, garde SON identité (`p1`) : celle de l'expérience ne doit
+   *  jamais l'écraser. */
   const addLevels = (levels, extra = null) => {
     const path = pathFromLevels(levels);
     const offset = levels.length && levels[0].type === STRUCTURE_TYPES.PROJECT ? 1 : 0;
     if (offset) addFolder([PROJECTS_CONTAINER], STRUCTURE_TYPES.CONTAINER, PROJECTS_CONTAINER);
     levels.forEach((level, i) => {
       const isLast = i === levels.length - 1;
-      addFolder(path.slice(0, i + 1 + offset), level.type, level.name, isLast ? extra : null);
+      const owns = level.type === STRUCTURE_TYPES.EXPERIMENT
+        || level.type === STRUCTURE_TYPES.INSTANCE
+        || level.type === STRUCTURE_TYPES.SECTION
+        || level.type === STRUCTURE_TYPES.SUBSECTION;
+      addFolder(path.slice(0, i + 1 + offset), level.type, level.name,
+        extra && owns ? extra : (isLast ? extra : null));
     });
     return path;
   };
@@ -686,7 +699,7 @@ export const datasetMirrorPlan = ({
         const sLevels = pathLevelsFor({
           ...ctx, section: s.section, subsections: s.subsection ? [s.subsection] : []
         });
-        const sPath = sLevels.length ? addLevels(sLevels) : path;
+        const sPath = sLevels.length ? addLevels(sLevels, { id: t.id }) : path;
         addText(sPath, textFileName(s.section, { html: true }), s.value, 'section-text');
       });
     }
@@ -874,7 +887,12 @@ export const resetDriveStructureCache = () => {
 /** LE FRÈRE QUI EST LE MÊME OBJET : parmi des dossiers frères décrits
  *  (`{ id, name, meta }`), celui dont la description porte l'identifiant
  *  applicatif voulu. Rend son identifiant, ou '' (aucun candidat, ou pas
- *  d'identifiant à chercher). PUR. */
+ *  d'identifiant à chercher). PUR.
+ *
+ *  Plusieurs frères peuvent porter le MÊME `extra.id` (les sections d'une même
+ *  expérience, par exemple) : l'appelant écarte d'abord, par `skipNames`, les
+ *  frères dont le nom est déjà dans le plan de ce passage — ceux-là n'ont pas
+ *  bougé. Ce qui reste est donc le dossier renommé. */
 export const pickRenamedSibling = (candidates = [], { appId = '' } = {}) => {
   const want = String(appId || '').trim();
   if (!want) return '';

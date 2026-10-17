@@ -433,11 +433,17 @@ const publish = (pc, data, opts = {}) => pc.do((M) => M.structure.publishDataset
 
 /* ═══ R — SCÉNARIO MINIMAL REPRODUCTIBLE : RENOMMER ET DÉPLACER UNE
    EXPÉRIENCE PAR LA SEULE PUBLICATION ═══════════════════════════════════════
-   Quatre gestes, aucun aléa, aucun second poste, aucun retard, aucune erreur —
-   et pourtant : le dossier du NOUVEAU nom naît VIDE, l'ancien garde tout, et le
-   DÉPLACEMENT ne produit rien. C'est le défaut central du rapport (nom =
-   identité), réduit à sa plus petite forme : chaque ligne ci-dessous est une
-   preuve exécutée, pas une lecture. */
+   Le défaut central de la FASE 0 (nom = identité) réduit à sa plus petite
+   forme. DEPUIS LA FASE 1 A (17/10/2026) la RENOMMINAISON est RÉPARÉE : le
+   dossier de l'objet est ADOPTÉ par son `extra.id` et renommé SUR PLACE — un
+   seul dossier, le même identifiant Drive. Le banco le PROUVE au lieu de le
+   raconter.
+
+   Ce qui reste ouvert est MESURÉ, pas caché :
+     • le DÉPLACEMENT d'un projet à l'autre (l'identité ne se cherche que parmi
+       les frères du NOUVEAU parent : le dossier du projet quitté reste) ;
+     • les fichiers de l'ANCIEN nom (la publication n'efface jamais un fichier
+       qu'elle n'écrit pas dans ce passage) — résidu, pas perte. */
 {
   const h = await newH({ seed: 99, datasetName: 'PROBE DATASET', datasetId: 'ds_probe' });
   const A = h.pcs[0];
@@ -455,26 +461,33 @@ const publish = (pc, data, opts = {}) => pc.do((M) => M.structure.publishDataset
   must(folders().includes(base) && folders().includes(`${base}/i1`) && folders().includes(`${base}/i1/data`),
     'l’expérience créée a bien ses trois niveaux sur le Drive');
   const projFolderId = h.drive.byPath(['Lab Workspace', 'PROBE_DATASET', 'projects', 'Proj']).id;
+  const alphaFolder = h.drive.foldersNamed('Alpha', projFolderId)[0] || null;
+  must(!!alphaFolder, 'le dossier « Alpha » existe avant la rinomina');
 
   /* ② LE MÊME objet, renommé — par la SEULE publication. */
   await P(full([leaf('Beta')]));
-  const after = files();
-  say('R', `renommé Alpha → Beta (même id) : dossiers ${JSON.stringify(folders().filter((p) => p.includes('/Proj/')))}`);
-  say('R', `fichiers de l’expérience : ${JSON.stringify(after.filter((p) => p.includes('/Proj/')))}`);
-  must(folders().includes(`${base}/i1/data`), 'l’ancien dossier est TOUJOURS là, avec ses enfants');
   const betaFolder = h.drive.foldersNamed('Beta', projFolderId)[0] || null;
-  const alphaStillThere = folders().includes(base);
-  const betaEmpty = !!betaFolder && h.drive.childrenOf(betaFolder.id).length === 0;
-  const betaJsonInOld = files().includes(`${base}/i1/Beta.json`);
-  const oldJsonKept = files().includes(`${base}/i1/Alpha.json`);
-  say('R', `nouveau dossier « Beta » : ${betaFolder ? h.drive.pathOf(betaFolder.id).slice(1).join('/') : 'AUCUN'} — ${betaEmpty ? 'VIDE (aucun enfant)' : betaFolder ? `${h.drive.childrenOf(betaFolder.id).length} enfant(s)` : '—'}`);
-  say('R', `le JSON du nouvel état est allé DANS L’ANCIEN dossier : ${betaJsonInOld} ; l’ancien JSON est resté : ${oldJsonKept}`);
-  say('R', `identifiant du dossier Alpha conservé : ${alphaStillThere}`);
+  say('R', `renommé Alpha → Beta (même id) : dossiers ${JSON.stringify(folders().filter((p) => p.includes('/Proj/')))}`);
+  say('R', `fichiers de l’expérience : ${JSON.stringify(files().filter((p) => p.includes('/Proj/')))}`);
+  must(!folders().includes(base), 'l’ancien dossier n’est PLUS là : le dossier a été RENOMMÉ SUR PLACE');
+  must(!!betaFolder && !!alphaFolder && betaFolder.id === alphaFolder.id,
+    'c’est le MÊME dossier Drive (même identifiant) : rien n’a été recréé');
+  must(!!betaFolder && h.drive.childrenOf(betaFolder.id).length > 0,
+    'le dossier renommé n’est pas vide : ses fichiers ont suivi');
+  const oldJsonKept = files().includes(`PROBE_DATASET/projects/Proj/Beta/i1/Alpha.json`);
+  say('R', `le fichier de l’ancien nom reste à côté du nouveau : ${oldJsonKept} — ` +
+    `aucun chemin sous l’ancien dossier : ${!files().some((p) => p.startsWith(base))}`);
+  if (oldJsonKept) {
+    say('R', 'RÉSIDU (pas une perte) : la publication n’efface pas un fichier qu’elle n’écrit pas dans ce passage ; le JSON du nouvel état est bien là.');
+  }
 
   /* ③ DÉPLACEMENT du même objet vers un autre projet, toujours par publication. */
   await P(full([leaf('Beta', 'Autre')]));
-  say('R', `après déplacement vers « Autre » : ${JSON.stringify(folders().filter((p) => p.includes('/Proj/') || p.includes('/Autre/'))) } — ` +
-    `un dossier « Autre/Beta » existe : ${folders().includes('PROBE_DATASET/projects/Autre/Beta')}`);
+  const movedToAutre = folders().includes('PROBE_DATASET/projects/Autre/Beta');
+  const stillInProj = folders().includes('PROBE_DATASET/projects/Proj/Beta');
+  say('R', `après déplacement vers « Autre » : dossier « Autre/Beta » = ${movedToAutre} ; ` +
+    `l’ancien « Proj/Beta » reste = ${stillInProj} — ` +
+    `${JSON.stringify(folders().filter((p) => p.includes('/Proj/') || p.includes('/Autre/')))}`);
 
   /* ④ SESSION NEUVE (caches vidés) : la publication se répare-t-elle ? */
   h.mods.structure.resetDriveStructureCache();
@@ -482,18 +495,13 @@ const publish = (pc, data, opts = {}) => pc.do((M) => M.structure.publishDataset
   await P(full([leaf('Beta', 'Autre')]));
   const healed = folders().includes('PROBE_DATASET/projects/Autre/Beta');
   const cleaned = !folders().includes(base);
-  say('R', `session neuve + republication : dossier au nouveau nom = ${healed}, ancien dossier disparu = ${cleaned}`);
+  say('R', `session neuve + republication : dossier au nouveau nom = ${healed}, ancien dossier « Alpha » disparu = ${cleaned}`);
 
-  if (betaEmpty && oldJsonKept && betaJsonInOld) {
-    defect('R', 'renommer une expérience par la SEULE publication crée un dossier VIDE au nouveau nom et laisse l’ancien avec tous les fichiers (dont le JSON du nouvel état) : sur le Drive, deux dossiers pour un objet — et l’expérience paraît vide sous son nouveau nom.');
+  if (movedToAutre && stillInProj) {
+    defect('R', 'DÉPLACEMENT : la publication CRÉE le dossier dans le projet visé mais LAISSE celui du projet quitté — l’objet a deux dossiers. L’adoption par identité ne regarde que les frères du NOUVEAU parent ; retrouver le dossier dans tout le dataset demande `appProperties` + un index (FASE 3).');
   }
-  if (!folders().includes('PROBE_DATASET/projects/Autre/Beta')) {
-    defect('R', 'déplacer une expérience d’un projet à l’autre par la publication ne produit RIEN sur le Drive (aucun dossier créé ni déplacé) : le déplacement est silencieusement perdu.');
-  }
-  if (!healed || !cleaned) {
-    defect('R', 'une session NEUVE ne répare pas : le dossier vide du nouveau nom est repris tel quel et l’ancien reste — le défaut est durable, il n’attend pas une seconde publication.');
-  }
-  answer('R', 'La publication seule ne renomme pas et ne déplace pas un dossier d’expérience : elle en fabrique un second (vide) au nouveau nom, écrit le nouvel état DANS l’ancien dossier, laisse l’ancien nom en place, et ignore le déplacement. Aucun aléa, aucun second poste : le nom est bien l’identité, et elle ne se transporte pas.');
+
+  answer('R', 'RENOMMER : réparé par la FASE 1 A — le dossier de l’objet est adopté par `extra.id` et renommé sur place (même identifiant Drive, enfants compris), même quand l’expérience a une instance et une section. RESTENT OUVERTS, mesurés ici : (a) le DÉPLACEMENT d’un projet à l’autre crée un second dossier et laisse l’ancien ; (b) le fichier `<ancien nom>.json` reste à côté du nouveau (résidu, pas perte : la publication n’efface rien d’autre).');
 }
 
 /* ── VERDICT DE L'HARNESS ET TABLEAU FINAL ──────────────────────────────── */

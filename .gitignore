@@ -92,3 +92,9 @@ workspace-shared-token.json.*
 # qui a failli entrer dans un commit. Ils restent sur le disque, jamais dans git.
 /_chrome_profile_*/
 
+# Les sondes ad-hoc d'une session de travail (60 fichiers `_p_*` le 17/10/2026 :
+# décodage de payload, inventaire des sauvegardes, diff de documents…). Même
+# règle que `_kf_*` : elles restent sur le disque comme preuve reproductible,
+# elles ne font jamais partie de l'app. Les `_*_test.mjs` restent suivis.
+/_p_*.mjs
+

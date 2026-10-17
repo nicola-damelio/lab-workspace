@@ -6839,5 +6839,49 @@ node _structure_windows_test.mjs       # 120 : les 📂 de chaque page, leur ran
 node _experiment_folder_files_test.mjs # 185 : le dossier lu, la remontée d'un cran, la création
 ```
 
+## FASE 1 A — l'identité va sur CHAQUE niveau de l'objet (17/10/2026)
 
+**Ce qui était vu.** Renommer une expérience qui a une **instance** et une **section**
+laissait l'ancien dossier à côté du nouveau : sur le Drive, deux dossiers pour un seul
+objet, et l'expérience paraissait vide sous son nouveau nom. Le cas SANS instance se
+renommait, lui, très bien — et c'est ce qui a mis sur la piste.
 
+**La cause.** `datasetMirrorPlan` écrivait `extra.id` **seulement sur le dernier niveau**
+du chemin (`addLevels`, `isLast ? extra : null`) : sans instance, le dernier niveau EST
+le dossier de l'expérience ; avec instance, l'id finissait sur le dossier de l'instance,
+et le dossier de l'expérience n'en portait aucun. `pickRenamedSibling` — qui adopte un
+dossier renommé par son identité — n'avait donc rien à reconnaître : il créait.
+
+**Le remède (deux lignes utiles).** `addLevels` pose l'identité sur **chaque** niveau de
+l'objet (expérience, instance, section, sous-section) ; le projet garde la sienne. Les
+textes de section passent désormais l'identité (`addLevels(sLevels, { id })`) : le dossier
+de section n'est plus orphelin. L'adoption ne change pas : elle reste par `extra.id`,
+avec `skipNames` qui écarte les frères dont le nom est déjà dans le plan (ceux-là n'ont
+pas bougé) — c'est ce qui permet de renommer une section sans toucher sa sœur.
+
+**Mesuré.** `node _drive_plan_identity_test.mjs --strict` → **0** (Q1 : les quatre
+niveaux portent `e1`, le projet `p1` ; Q2 : Alpha→Beta est le MÊME dossier Drive,
+identifiant compris, et l'ancien nom disparaît ; Q3/Q4 : deux sections sœurs restent
+deux dossiers, et en renommer une laisse l'autre intacte). Suites relancées :
+`_drive_structure_test`, `_drive_instance_level_test`, `_drive_mirror_test`,
+`_drive_rename_test`, `_drive_contract_test` (32/32), `_drive_two_pc_random_test`,
+`_drive_tidy_test`, `_drive_purge_test`, `_drive_folder_anchor_test`,
+`_drive_stray_project_test`, `_workspace_publish_test`, `_workspace_drive_test`,
+`_dataset_write_guard_test`, `_harness_query_parser_test` — **exit 0** ;
+`npx vite build` OK.
+
+**Ce qui RESTE ouvert, et qui est mesuré dans `_drive_sync_repro_test.mjs` (R).**
+* **Déplacer** une expérience d'un projet à l'autre crée le dossier dans le projet visé
+  et **laisse** celui du projet quitté : l'adoption ne regarde que les frères du nouveau
+  parent. Retrouver un dossier dans tout le dataset demande `appProperties` + un index —
+  c'est la suite de A (FASE 3).
+* Le fichier `<ancien nom>.json` reste à côté du nouveau : la publication n'efface jamais
+  un fichier qu'elle n'écrit pas dans ce passage. C'est un résidu, pas une perte, et le
+  nouveau JSON est bien là.
+
+**Vérifier soi-même**
+
+```bash
+node _drive_plan_identity_test.mjs --strict   # 0 : l'identité sur chaque niveau, la rinomina sur place
+node _drive_sync_repro_test.mjs               # R : la rinomina réparée, le déplacement encore ouvert (déclaré)
+```
