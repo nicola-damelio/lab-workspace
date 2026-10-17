@@ -26,6 +26,32 @@
        que la documentation officielle ne dit pas la même chose partout ; le
        test dit laquelle est utilisée.
 
+   SOURCES — CE QUI EST VÉRIFIÉ SUR LA DOCUMENTATION, ET CE QUI EST UNE
+   HYPOTHÈSE DÉCLARÉE (vérifié le 16/10/2026) :
+     • catalogue officiel de l'API v3 (discovery `drive:v3`, révision 20261011) :
+         – `File.trashed` : « Whether the file has been trashed, either
+           explicitly or from a trashed parent folder. Only the owner may trash
+           a file… » → la variante 'cascade' est la lecture DOCUMENTÉE ;
+         – `File.parents` : « A file can only have one parent folder; specifying
+           multiple parents isn't supported. … Update requests must use the
+           `addParents` and `removeParents` parameters » ;
+         – `files.list.pageSize` : min 1, défaut 100, « The maximum value is
+           1000; values above 1000 will be coerced to 1000 » ;
+         – `files.list.orderBy` : « A comma-separated list of sort keys »
+           (`createdTime`, `folder`, `modifiedTime`, `name`, `name_natural`, …) ;
+         – `files.list.corpora` / `driveId` / `includeItemsFromAllDrives` /
+           `supportsAllDrives` / `spaces` : le vocabulaire des Drives partagés ;
+         – `File.name` : « This isn't necessarily unique within a folder » → les
+           JUMEAUX de nom sont légitimes côté API (c'est le défaut de l'app).
+     • guide « Search query terms and operators » : `fullText contains` cherche
+       dans le TEXTE (exemple : « if the fullText of a document contains the
+       string “HelloWorld”… ») ; une phrase entre guillemets est exacte.
+     • HYPOTHÈSES DÉCLARÉES (paramètres du TEST, pas des mesures de Google) :
+       la FORME du délai de cohérence (recherche par nom retardée, lecture par
+       identifiant immédiate) ; les seuils 0,2 s / 0,5 s ; l'ordre rendu SANS
+       `orderBy` (l'API ne garantit rien : « the items are returned
+       arbitrarily » ; le faux rend l'ordre de création).
+
    CE QUI N'EST PAS FIDÈLE (dit franchement) :
      • les délais sont ceux du TEST (horloge virtuelle : `advance(ms)`), pas
        ceux de Google ; ce ne sont pas des statistiques du Drive réel ;
@@ -34,7 +60,21 @@
        (l'un ne voit pas l'écriture de l'autre), qui est le mécanisme réel du
        défaut — voir _harness/two-pc.mjs ;
      • les 401 viennent d'un jeton marqué « expiré » par le test
-       (`pc.expireToken()`), pas d'une vraie expiration Google.
+       (`pc.expireToken()`), pas d'une vraie expiration Google ;
+     • l'ORDRE RENDU SANS `orderBy` n'est pas celui de Google : l'API ne garantit
+       aucun ordre (« the items are returned arbitrarily »), le faux rend
+       toujours l'ordre de création (createdTime, puis n° d'écriture). Un test
+       qui compte sur l'ordre pose un `orderBy` (clés triées : createdTime,
+       modifiedTime, name) ;
+     • `fullText contains` est APPROXIMÉ : l'API cherche dans le texte indexé
+       (nom et contenu), le faux dans le nom ET dans le corps qu'il a écrit ;
+     • AUCUNE CLAUSE N'EST JAMAIS IGNORÉE (16/10/2026) : le lecteur de `q`
+       REFUSE toute clause inconnue ou mal formée, toute `orderBy` qu'il ne sait
+       pas trier, tout `pageSize` hors 1..1000, tout `pageToken` qu'il n'a pas
+       émis, `alt=media` sur un dossier, et — parce qu'il ne les modélise pas —
+       `corpora`/`driveId`/`supportsAllDrives`/`spaces` (Drives partagés). Les
+       refus sont visibles (`stats.unsupportedQueries`, `listParamsNotModelled`) :
+       un faux Drive qui devine rend tous les résultats faux.
    ========================================================================= */
 
 export const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -85,34 +125,73 @@ const splitClauses = (q) => {
     cur += ch;
   }
   out.push(cur.trim());
-  return out.filter(Boolean);
+  /* ⚠ PAS de `.filter(Boolean)` : une partie VIDE est une requête MAL FORMÉE
+     (« and » en trop, requête coupée) et le lecteur la REFUSE explicitement.
+     La filtrer en silence, c'est répondre à une AUTRE question que celle
+     posée — même famille que le défaut `i += String(…)` ci-dessus. */
+  return out;
 };
 
 /** Le lecteur de `q` de l'API — SEULEMENT les clauses que l'app emploie.
- *  Une clause inconnue n'est PAS ignorée (elle fausserait la réponse) : elle
- *  est refusée, et le test la voit. */
+ *  RÈGLE (demandée le 16/10/2026) : une clause INCONNUE n'est JAMAIS ignorée,
+ *  elle est COLLECTÉE (`unsupported`) et `files.list` REFUSE la requête ; une
+ *  clause mal formée (partie vide) est refusée de même. Un `q` VIDE (l'app
+ *  interroge l'API sans `q` pour savoir si elle répond) reste légitime : il ne
+ *  porte aucune clause. */
 export const parseDriveQuery = (q) => {
   const out = {
-    name: null, nameContains: null, parentsOf: null, trashed: null, folderOnly: false,
+    name: null, nameContains: null, fullText: null, parentsOf: null, trashed: null,
+    mimeTypeEquals: null, mimeTypeNotEquals: null, folderOnly: false,
     appKey: null, appValue: null, unsupported: []
   };
-  const clauses = splitClauses(String(q || ''));
-  for (const raw of clauses) {
-    const c = raw.trim();
+  const whole = String(q || '').trim();
+  if (!whole) return out;
+  for (const part of splitClauses(whole)) {
+    const c = String(part).trim();
     let m;
+    if (!c) { out.unsupported.push('(partie vide : « and » en trop, ou requête coupée)'); continue; }
     if ((m = /^name\s*=\s*'((?:[^'\\]|\\.)*)'$/.exec(c))) { out.name = unescapeQ(m[1]); continue; }
     if ((m = /^name\s+contains\s+'((?:[^'\\]|\\.)*)'$/.exec(c))) { out.nameContains = unescapeQ(m[1]); continue; }
-    if ((m = /^fullText\s+contains\s+'((?:[^'\\]|\\.)*)'$/.exec(c))) { out.nameContains = unescapeQ(m[1]); continue; }
+    /* `fullText contains` : l'API cherche dans le TEXTE INDEXÉ du fichier (nom
+       et contenu) ; le faux Drive n'a que le nom et le corps qu'il a écrits et
+       cherche donc dans les DEUX (APPROXIMATION DÉCLARÉE — jamais un silence). */
+    if ((m = /^fullText\s+contains\s+'((?:[^'\\]|\\.)*)'$/.exec(c))) { out.fullText = unescapeQ(m[1]); continue; }
     if ((m = /^'([^']+)'\s+in\s+parents$/.exec(c))) { out.parentsOf = m[1]; continue; }
     if ((m = /^trashed\s*=\s*(true|false)$/.exec(c))) { out.trashed = m[1] === 'true'; continue; }
-    if ((m = /^mimeType\s*=\s*'(.*)'$/.exec(c))) { out.folderOnly = m[1] === FOLDER_MIME; continue; }
+    /* ⚠ `mimeType = 'X'` FILTRAIT AUTREFOIS SEULEMENT QUAND X ÉTAIT LE TYPE
+       DOSSIER : pour tout autre type la clause était SILENCIEUSEMENT perdue
+       (on rendait aussi les dossiers). Maintenant tout type est comparé, et
+       `!=` est comparé aussi. */
+    if ((m = /^mimeType\s*=\s*'((?:[^'\\]|\\.)*)'$/.exec(c))) {
+      out.mimeTypeEquals = unescapeQ(m[1]);
+      out.folderOnly = out.mimeTypeEquals === FOLDER_MIME;
+      continue;
+    }
+    if ((m = /^mimeType\s*!=\s*'((?:[^'\\]|\\.)*)'$/.exec(c))) { out.mimeTypeNotEquals = unescapeQ(m[1]); continue; }
     if ((m = /^appProperties\s+has\s*\{\s*key\s*=\s*'([^']+)'\s+and\s+value\s*=\s*'([^']*)'\s*\}$/.exec(c))) {
       out.appKey = m[1]; out.appValue = m[2]; continue;
     }
-    if (/^(owners|sharedWithMe|starred|visibility|properties|writersCanShare)\b/.test(c)) {
-      out.unsupported.push(c); continue;
-    }
     out.unsupported.push(c);
+  }
+  return out;
+};
+
+/* LES CLÉS DE TRI QUE LE FAUX DRIVE SAIT TRIER. L'API en accepte davantage
+   (`folder`, `modifiedByMeTime`, `recency`, `viewedByMeTime`, `starred`,
+   `name_natural`…) : elles sont REFUSÉES — pas ignorées — tant qu'un test n'en
+   a pas besoin (voir la description de `orderBy` dans l'API v3). */
+const FAKE_ORDER_KEYS = new Set(['createdTime', 'modifiedTime', 'name']);
+/** `orderBy` → liste de { key, desc }. Toute clé inconnue va dans `unsupported`
+ *  (donc la requête entière est refusée), jamais dans l'oubli. */
+export const parseDriveOrderBy = (raw, unsupported = []) => {
+  const out = [];
+  for (const piece of String(raw || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    const m = /^([A-Za-z_]+)(?:\s+(asc|desc))?$/i.exec(piece);
+    if (!m || !FAKE_ORDER_KEYS.has(m[1])) {
+      unsupported.push(`orderBy=${piece}${m && m[1] ? ' (clé que le faux Drive ne trie pas)' : ''}`);
+      continue;
+    }
+    out.push({ key: m[1], desc: String(m[2] || '').toLowerCase() === 'desc' });
   }
   return out;
 };
@@ -144,7 +223,10 @@ export const createFakeDrive = ({
     calls: 0, errors: 0, errorsByStatus: {}, byMethod: {}, pages: 0, uploads: 0,
     permanentDeletes: 0, hardDeleteIds: [], unsupportedQueries: [], unrouted: [],
     searchByName: 0, searchByNameWithoutTrashedFalse: 0, listRequests: 0, tokenMints: 0,
-    networkErrors: 0
+    networkErrors: 0,
+    /* Ce que le faux Drive REFUSE faute de le modéliser (jamais un silence) :
+       les paramètres de Drives partagés, et le téléchargement d'un dossier. */
+    listParamsNotModelled: [], folderDownloads: 0, orderByRequests: 0
   };
   const nextId = (p) => `${p}${(++seq).toString(36)}${seed}`;
   const stamp = (ms) => ISO(1700000000000 + ms);
@@ -249,6 +331,14 @@ export const createFakeDrive = ({
   };
 
   /* ── LA RECHERCHE, avec son retard de cohérence ─────────────────────────── */
+  /** Comparateur d'une clé de tri (`FAKE_ORDER_KEYS`) : `name` et
+   *  `modifiedTime` se comparent comme l'API les décrit (alphabétique pour
+   *  `name`), et `createdTime` avec le n° d'écriture en départage. */
+  const cmpOf = (key) => {
+    if (key === 'name') return (a, b) => String(a.name).localeCompare(String(b.name));
+    if (key === 'modifiedTime') return (a, b) => String(a.modifiedTime).localeCompare(String(b.modifiedTime));
+    return (a, b) => (a.createdTime === b.createdTime ? a.seq - b.seq : String(a.createdTime).localeCompare(String(b.createdTime)));
+  };
   const matches = (n, p, { forSearch = false } = {}) => {
     if (forSearch ? n.searchAt > time.t : n.listAt > time.t) return false;
     const wantTrashed = p.trashed === null ? false : p.trashed;
@@ -256,18 +346,26 @@ export const createFakeDrive = ({
     if (p.parentsOf !== null && n.parent !== p.parentsOf) return false;
     if (p.name !== null && n.name !== p.name) return false;
     if (p.nameContains !== null && !n.name.includes(p.nameContains)) return false;
-    if (p.folderOnly && n.mimeType !== FOLDER_MIME) return false;
+    /* `fullText` = nom OU corps (approximation déclarée, voir parseDriveQuery). */
+    if (p.fullText !== null && !(n.name.includes(p.fullText) || String(n.text || '').includes(p.fullText))) return false;
+    if (p.mimeTypeEquals !== null && n.mimeType !== p.mimeTypeEquals) return false;
+    if (p.mimeTypeNotEquals !== null && n.mimeType === p.mimeTypeNotEquals) return false;
     if (p.appKey && String(n.appProperties[p.appKey] ?? '') !== p.appValue) return false;
     return true;
   };
 
   const listFiles = ({ q, pageSize, pageToken, orderBy }) => {
     const p = parseDriveQuery(q || '');
+    /* `orderBy` est validé AVANT le refus : une clé que le faux Drive ne sait
+       pas trier doit se retrouver dans `unsupported` (donc refusée), jamais
+       ignorée en silence. */
+    const order = parseDriveOrderBy(orderBy, p.unsupported);
+    if (order.length) stats.orderByRequests += 1;
     if (p.unsupported.length) {
       stats.unsupportedQueries.push(q);
       throw new Error(`requête non reconnue par le faux Drive : « ${p.unsupported.join(' · ')} » (q=${q})`);
     }
-    const forSearch = p.name !== null || p.nameContains !== null;
+    const forSearch = p.name !== null || p.nameContains !== null || p.fullText !== null;
     if (forSearch) {
       stats.searchByName += 1;
       if (!/trashed\s*=\s*false/.test(String(q || ''))) stats.searchByNameWithoutTrashedFalse += 1;
@@ -277,10 +375,33 @@ export const createFakeDrive = ({
     /* Sans clause, l'API ne rend PAS la corbeille : c'est le défaut, et le
        test peut le constater (voir stats.searchByNameWithoutTrashedFalse). */
     const rows = [...nodes.values()].filter((n) => matches(n, p, { forSearch }));
+    /* SANS `orderBy`, l'API ne garantit AUCUN ordre (« the items are returned
+       arbitrarily ») ; le faux Drive rend, lui, l'ordre de CRÉATION
+       (createdTime puis n° d'écriture) — COMMODITÉ DÉCLARÉE, pas une promesse
+       de Google. Les clés triables sont dans `FAKE_ORDER_KEYS`. */
     rows.sort((a, b) => (a.createdTime === b.createdTime ? a.seq - b.seq : a.createdTime.localeCompare(b.createdTime)));
-    if (/createdTime\s+desc/i.test(String(orderBy || ''))) rows.reverse();
-    const size = Math.min(Number(pageSize) || defaultPageSize, pageSizeLimit);
+    for (let i = order.length - 1; i >= 0; i -= 1) {
+      const { key, desc } = order[i];
+      const base = cmpOf(key);
+      rows.sort((a, b) => (desc ? -base(a, b) : base(a, b)));
+    }
+    /* `pageSize` : l'API demande un ENTIER 1..1000 (« values above 1000 will be
+       coerced to 1000 »). Un `pageSize` absurde était absorbé par
+       `Number(pageSize) || défaut` — une page vide que l'app relisait sans fin ;
+       maintenant la requête est REFUSÉE. */
+    const asked = (pageSize === null || pageSize === undefined || pageSize === '') ? defaultPageSize : Number(pageSize);
+    if (!Number.isInteger(asked) || asked < 1) {
+      stats.unsupportedQueries.push(`pageSize=${pageSize}`);
+      throw new Error(`pageSize invalide : « ${pageSize} » — l'API demande un entier entre 1 et ${pageSizeLimit} ; le faux Drive refuse au lieu d'inventer une page.`);
+    }
+    const size = Math.min(asked, pageSizeLimit);
+    /* Le jeton de page du faux Drive est un OFFSET ; tout autre jeton est
+       rejeté — l'API rejette elle aussi un jeton qu'elle n'a pas émis. */
     const start = pageToken ? Number(pageToken) : 0;
+    if (pageToken && (!Number.isInteger(start) || start < 0)) {
+      stats.unsupportedQueries.push(`pageToken=${pageToken}`);
+      throw new Error(`pageToken invalide : « ${pageToken} » — le faux Drive n'émet que des offsets ; tout autre jeton est refusé comme l'API refuse les siens.`);
+    }
     stats.pages += 1;
     const page = rows.slice(start, start + size);
     const nextPageToken = start + size < rows.length ? String(start + size) : '';
@@ -396,6 +517,24 @@ export const createFakeDrive = ({
     }
 
     if (p === '/drive/v3/files' && method === 'GET') {
+      /* LES PARAMÈTRES QUE LE FAUX DRIVE NE MODÉLISE PAS SONT REFUSÉS, PAS
+         IGNORÉS : `corpora`/`driveId` restreignent la recherche à un Drive
+         partagé (ou à un autre corpus) — les ignorer rendrait TOUT l'univers du
+         faux, c'est-à-dire une réponse fausse qui aurait l'air juste. L'app
+         n'ouvre pas les Drives partagés (voir _drive_sync_repro_test.mjs, Q8 :
+         `supportsAllDrives` absent du module) : le jour où elle les ouvrira,
+         c'est ICI qu'il faudra les modéliser, et le test le dira. */
+      const unmodelled = [
+        qp.get('corpora') && qp.get('corpora') !== 'user' ? `corpora=${qp.get('corpora')}` : '',
+        qp.get('driveId') ? `driveId=${qp.get('driveId')}` : '',
+        qp.get('includeItemsFromAllDrives') ? `includeItemsFromAllDrives=${qp.get('includeItemsFromAllDrives')}` : '',
+        qp.get('supportsAllDrives') ? `supportsAllDrives=${qp.get('supportsAllDrives')}` : '',
+        qp.get('spaces') && qp.get('spaces') !== 'drive' ? `spaces=${qp.get('spaces')}` : ''
+      ].filter(Boolean);
+      if (unmodelled.length) {
+        stats.listParamsNotModelled.push(unmodelled.join(' '));
+        throw new Error(`le faux Drive ne modélise pas « ${unmodelled.join(' · ')} » (Drives partagés / autres espaces) : il refuse au lieu de rendre tout l'univers.`);
+      }
       return res(listFiles({
         q: qp.get('q') || '', pageSize: qp.get('pageSize'), pageToken: qp.get('pageToken'),
         orderBy: qp.get('orderBy') || ''
@@ -451,7 +590,16 @@ export const createFakeDrive = ({
       if (method === 'DELETE') return hardDelete(id) ? res({}, 204) : err(404, 'File not found');
       const node = nodes.get(id);
       if (!node) return err(404, 'File not found');
-      if (method === 'GET' && qp.get('alt') === 'media') return res({}, 200, node.text);
+      if (method === 'GET' && qp.get('alt') === 'media') {
+        /* `alt=media` SUR UN DOSSIER : l'API refuse de télécharger un dossier.
+           Le faux Drive rendait une chaîne VIDE — que `JSON.parse` transformait
+           en `{}` : un silence qui pouvait passer pour une réponse. */
+        if (node.mimeType === FOLDER_MIME) {
+          stats.folderDownloads += 1;
+          return err(400, 'cannot download a folder (refus du faux Drive, comme l’API)');
+        }
+        return res({}, 200, node.text);
+      }
       if (method === 'PATCH') {
         const body = safeJson(typeof init.body === 'string' ? init.body : '');
         if (body.name !== undefined) {
