@@ -199,6 +199,82 @@ has(APP, 'setDialog((prev) => prev || {',
   '7l. le message est le même que celui du verrou d’avant écriture');
 has(APP, "console.warn('[experiments] shared copy unreadable while writing",
   '7m. une lecture impossible est dite, et ne bloque pas la sauvegarde');
+has(APP, 'commitFallback: ({ payload: body }) => docRef.set(body, { merge: true })',
+  '7n. …et si la transaction ne peut pas lire non plus, un repli explicite écrit comme avant (au lieu d’une erreur)');
+has(APP, 'if (written.unchecked) {',
+  '7o. …et ce repli-là est DIT dans les journaux (la protection absente ne passe pas inaperçue)');
+
+/* ── 8. Le repli : lecture ET transaction refusées (403) ────────────────── */
+/* Cas réel : les règles refusent la relecture ; la transaction relit donc elle
+   aussi et se fait refuser. Sans repli, la sauvegarde devenait une ERREUR alors
+   qu’elle partait très bien avant ce verrou. */
+const makeLockedStore = () => ({
+  doc: { rev: 0, tests: [], writes: 0 },
+  async get() { throw new Error('Missing or insufficient permissions'); },
+  async commit() {
+    const err = new Error('Missing or insufficient permissions');
+    err.code = 'permission-denied';
+    throw err;
+  }
+});
+
+const locked = makeLockedStore();
+let fallbackWrites = 0;
+const uncheckedSave = await G.guardedDatasetWrite({
+  read: () => locked.get(),
+  commit: (args) => locked.commit(args),
+  commitFallback: async ({ payload }) => {
+    fallbackWrites += 1;
+    locked.doc.writes += 1;
+    locked.doc.tests = payload.tests.map((t) => ({ ...t }));
+  },
+  payload: { tests: [T('91')] },
+  tests: [T('91')],
+  rebuild: (tests) => ({ tests }),
+  retryDelay: 1
+});
+eq(fallbackWrites, 1, '8. lecture ET transaction refusées : le repli écrit quand même (la sauvegarde ne devient pas une erreur)');
+eq(sortIds(locked.doc.tests), ['91'], '8b. …et la liste de CE poste est bien écrite');
+eq(uncheckedSave.unchecked, true, '8c. le résultat DIT que le contrôle de version n’a pas pu jouer (pas de silence)');
+eq(uncheckedSave.rev, null, '8d. aucune version n’est avancée (on n’a rien lu)');
+
+/* Sans repli fourni, le refus remonte : comportement d’avant, jamais silencieux. */
+const bare = makeLockedStore();
+await assert.rejects(
+  () => G.guardedDatasetWrite({
+    read: () => bare.get(),
+    commit: (args) => bare.commit(args),
+    payload: { tests: [T('91')] },
+    tests: [T('91')],
+    rebuild: (tests) => ({ tests }),
+    retryDelay: 1
+  }),
+  (err) => G.isReadDenied(err),
+  '8e. sans repli, le refus est RENDU à l’appelant (aucune perte silencieuse)'
+);
+eq(bare.doc.writes, 0, '8f. …et rien n’a été écrit');
+
+/* Une vraie panne ne doit PAS être masquée par le repli. */
+let masked = 0;
+const brokenStore = {
+  doc: { rev: 0, tests: [], writes: 0 },
+  async get() { throw new Error('Missing or insufficient permissions'); },
+  async commit() { const e = new Error('internal error'); e.code = 'internal'; throw e; }
+};
+await assert.rejects(
+  () => G.guardedDatasetWrite({
+    read: () => brokenStore.get(),
+    commit: (args) => brokenStore.commit(args),
+    commitFallback: async () => { masked += 1; },
+    payload: { tests: [T('91')] },
+    tests: [T('91')],
+    rebuild: (tests) => ({ tests }),
+    retryDelay: 1
+  }),
+  /internal error/,
+  '8g. une panne qui n’est pas un refus de lecture n’est PAS masquée par le repli'
+);
+eq(masked, 0, '8h. …le repli n’est pas appelé du tout');
 
 /* ── Bilan ───────────────────────────────────────────────────────────────── */
 console.log(`✅ ${passed} vérifications passées (deux postes qui écrivent ensemble ne perdent plus d’expérience)`);

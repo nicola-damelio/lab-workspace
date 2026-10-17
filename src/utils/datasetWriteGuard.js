@@ -60,6 +60,22 @@ export const isDatasetWriteConflict = (err) => Boolean(err && (
   || err.name === 'DatasetWriteConflict'
 ));
 
+/** Le refus vient-il d'une LECTURE interdite (règles Firestore) et non d'une
+ *  panne ou d'une écriture concurrente ? C'est le seul cas où l'on accepte de
+ *  renoncer au contrôle de version : on n'a jamais pu lire, donc on ne perd
+ *  aucun verrou — sans ce repli, la sauvegarde échouait tout court.
+ *  Reconnaît le code du SDK (`permission-denied`), son équivalent gRPC (7) et
+ *  le message, car les erreurs levées DANS une transaction arrivent parfois
+ *  dépouillées de leur code. */
+const READ_DENIED_CODES = new Set(['permission-denied', 'unauthenticated', 7, 16]);
+export const isReadDenied = (err) => {
+  if (!err) return false;
+  const code = err.code !== undefined ? err.code : (err.body && err.body.code);
+  if (code !== undefined && code !== null && READ_DENIED_CODES.has(code)) return true;
+  if (code !== undefined && code !== null && READ_DENIED_CODES.has(Number(code))) return true;
+  return /insufficient permissions|permission[- ]denied|no permission/i.test(String(err.message || ''));
+};
+
 /** La version d'un document (`rev`), 0 quand elle n'existe pas encore — c'est le
  *  cas de tous les documents écrits avant ce verrou : la première écriture
  *  versionnée leur donne `rev: 1`. */
@@ -105,6 +121,12 @@ const defaultSleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms);
  * @param {function({payload:object, expectedRev:number|null}): Promise<void>} commit
  *        écrit `payload` et LÈVE `DatasetWriteConflict` si `expectedRev` n'est
  *        plus la version du document (`null` = pas de version connue).
+ * @param {function({payload:object}): Promise<void>} [commitFallback]
+ *        repli utilisé UNIQUEMENT quand on n'a pas pu lire (et que `commit`
+ *        échoue pour la même raison, parce que sa transaction relit aussi) :
+ *        on écrit alors sans contrôle de version, comme avant ce verrou, et le
+ *        résultat porte `unchecked: true`. Sans ce repli, ce cas-là transforme
+ *        une sauvegarde qui marchait en erreur visible.
  * @param {object} payload        la charge prête pour `tests` (déjà compressée)
  * @param {Array} tests           la liste que CE poste veut écrire
  * @param {Array} deletions       les suppressions enregistrées (tombes)
@@ -112,11 +134,12 @@ const defaultSleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms);
  *        reconstruit `payload` pour une liste refondue (obligatoire dès qu'une
  *        expérience est rattrapée : sinon la liste écrite ne serait plus celle
  *        que la charge porte).
- * @returns {Promise<{payload:object, tests:Array, rescued:Array, attempts:number, rev:number|null}>}
+ * @returns {Promise<{payload:object, tests:Array, rescued:Array, attempts:number, rev:number|null, unchecked?:boolean}>}
  */
 export const guardedDatasetWrite = async ({
   read,
   commit,
+  commitFallback = null,
   payload,
   tests = [],
   deletions = [],
@@ -165,6 +188,24 @@ export const guardedDatasetWrite = async ({
         rev: expectedRev === null ? null : expectedRev + 1
       };
     } catch (err) {
+      /* ⓐ a échoué (aucune version connue) ET la transaction est refusée pour la
+         même raison : sa propre relecture est interdite. Ce n'est pas un conflit,
+         c'est une lecture impossible — et sans repli la sauvegarde échouait
+         alors qu'elle partait très bien avant ce verrou. On écrit donc SANS
+         contrôle de version, et on le DIT (`unchecked`) pour que l'appelant
+         puisse le montrer : la protection n'est pas silencieusement absente. */
+      if (typeof commitFallback === 'function' && expectedRev === null && isReadDenied(err)) {
+        await commitFallback({ payload: body });
+        console.warn('[dataset] shared copy unreadable and transaction refused — saved WITHOUT a version check');
+        return {
+          payload: body,
+          tests: wanted,
+          rescued,
+          attempts: attempt,
+          rev: null,
+          unchecked: true
+        };
+      }
       /* ③ Le document a changé entre la relecture et l'écriture : on recommence
          avec la copie fraîche — c'est ainsi que l'expérience de l'autre poste
          entre dans la liste au lieu de disparaître. L'attente est DISPERSÉE :

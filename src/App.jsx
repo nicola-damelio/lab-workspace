@@ -2244,8 +2244,17 @@ if (customType === 'dosy') {
           if (expectedRev !== null && now !== expectedRev) throw new DatasetWriteConflict(expectedRev, now);
           tx.set(docRef, { ...body, [DATASET_REV_FIELD]: now + 1 }, { merge: true });
         });
-      }
+      },
+      /* Repli explicite : la relecture ci-dessus a été refusée ET la transaction
+         ne peut pas lire non plus (règles Firestore) — sa lecture à elle est
+         interdite aussi. Plutôt que de transformer une sauvegarde qui marchait
+         en erreur, on écrit sans contrôle de version, exactement comme la
+         version précédente de l'app. `unchecked` le dit dans la console. */
+      commitFallback: ({ payload: body }) => docRef.set(body, { merge: true })
     });
+    if (written.unchecked) {
+      console.warn('[experiments] saved WITHOUT a version check — the shared copy could not be read');
+    }
     if (!silent && written.rescued.length) {
       console.warn('[experiments] write-time remerge:', written.rescued.map((t) => t.name || t.id));
       setDialog((prev) => prev || {
