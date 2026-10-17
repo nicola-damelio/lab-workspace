@@ -132,8 +132,40 @@ ok(S.isDatasetMirrorDeleted(published.mirror, { id: 'dsLocal' }),
   '…et celle de ce poste reste (une tombe ne s’oublie jamais)');
 eq(published.mirror.datasets['id:ds1'].folderId, 'F1',
   'le registre des dossiers du Drive est adopté (le poste n’oublie pas où viser)');
-eq(published.datasets.map((d) => d.id), ['ds1'],
-  'la liste publiée reste celle de CE poste (le Drive la complète, ne la remplace pas)');
+/* ❗ LA LISTE PUBLIÉE S'UNIT À CELLE DU DRIVE. La règle précédente était plus
+   faible (« la liste publiée reste celle de CE poste ; le Drive la complète à la
+   LECTURE ») : elle suffisait pour les tombes, pas pour les 23 expériences
+   réveillées. Un poste dont la copie locale n'avait pas encore adopté les
+   `revivedProjects` du Drive réécrivait l'index SANS elles — et elles
+   disparaissaient de l'index partagé pour TOUS les postes, alors qu'aucune
+   suppression ne l'avait demandé. Rien ne s'efface plus : les listes s'unissent
+   (la plus récente décrit), les tombes restent la seule chose qui retire une
+   ligne — et elles s'ADDITIONNENT. */
+eq(published.datasets.map((d) => d.id).sort(), ['ds1', 'ds9'],
+  'la liste publiée RÉUNIT celle de ce poste et celle du Drive (aucun dataset ne s’efface)');
+
+/* Le cas exact du rapport : un poste SANS les réveils réécrit l'index. */
+const revivedElsewhere = {
+  datasets: [], projects: [], deletedProjects: [],
+  revivedProjects: [{ id: 't84', datasetId: 'ds1', revivedAt: 9 }],
+  mirror: S.emptyDriveMirror()
+};
+const emptyLocal = {
+  datasets: [], projects: [], deletedProjects: [], revivedProjects: [],
+  mirror: S.emptyDriveMirror()
+};
+const afterStaleWrite = W.publishableWorkspaceState(emptyLocal, revivedElsewhere);
+eq(afterStaleWrite.revivedProjects.map((r) => r.id), ['t84'],
+  'un réveil fait ailleurs SURVIT à la réécriture d’un poste qui ne le connaissait pas (les 23 expériences)');
+eq(afterStaleWrite.projects, [],
+  '…et la fusion n’invente rien : un index vide reste un index vide de projets');
+
+const projectsElsewhere = {
+  datasets: [], projects: [{ id: 'p1', datasetId: 'ds1', name: 'Projet', updatedAt: 4 }],
+  deletedProjects: [], revivedProjects: [], mirror: S.emptyDriveMirror()
+};
+eq(W.publishableWorkspaceState(emptyLocal, projectsElsewhere).projects.map((p) => p.id), ['p1'],
+  'un projet connu du Drive ne disparaît pas de l’index parce qu’un poste ne l’a pas encore vu');
 
 const other = W.publishableWorkspaceState(remoteOnly, localOnly);
 ok(S.isDatasetMirrorDeleted(other.mirror, { id: 'ds3' }) && S.isDatasetMirrorDeleted(other.mirror, { id: 'dsLocal' }),
@@ -219,8 +251,12 @@ const pagehideUpload = uploadsOfState().pop();
 const pagehideState = W.parseWorkspaceState(pagehideUpload.text);
 ok(S.isDatasetMirrorDeleted(pagehideState.mirror, { id: 'ds3' }),
   '…et pourtant il ne publie pas moins que ce que le poste a lu (la mémoire suffit)');
-eq(pagehideState.datasets.map((d) => d.id), ['ds1'],
-  '…le renommage de ce poste, lui, part bien (on n’oublie pas ce qu’on vient de faire)');
+/* La liste publiée s'UNIT à celle du Drive : le renommage part, et le dataset
+   que seul le Drive connaissait ne s'efface pas au passage. */
+eq(pagehideState.datasets.map((d) => d.id).sort(), ['ds1', 'ds9'],
+  '…le renommage de ce poste part bien, et rien de ce que le Drive portait ne s’efface');
+eq((pagehideState.datasets.find((d) => d.id === 'ds1') || {}).title, 'Pepper (renamed)',
+  '…c’est bien la version de CE poste qui décrit le dataset renommé');
 
 /* ── 5. App.jsx passe réellement par ce chemin ──────────────────────────── */
 has(APP, 'installWorkspaceAutosave(() => ({',

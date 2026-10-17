@@ -246,15 +246,26 @@ export const rememberRemoteWorkspaceState = (state) => {
  *  dernière mémorisation). null tant que rien n'a été lu. */
 export const lastRemoteWorkspaceState = () => lastRemoteState;
 
-/** L'état À PUBLIER : l'état de CE poste, complété par les tombes (et le
- *  registre des dossiers) de l'état du Drive déjà connu — jamais plus pauvre que
- *  lui. `null` quand l'état local n'en est pas un. PUR. */
+/** L'état À PUBLIER : l'état de CE poste, FUSIONNÉ avec l'état du Drive déjà
+ *  connu — jamais plus pauvre que lui. `null` quand l'état local n'en est pas un.
+ *  PUR (voir _workspace_publish_test.mjs).
+ *
+ *  ❗ PAS SEULEMENT LES TOMBES. La version précédente n'additionnait que le
+ *  miroir (les tombes et le registre des dossiers) : les `projects`, les
+ *  `revivedProjects` et la liste des datasets partaient tels quels. Un poste
+ *  dont la copie locale n'avait pas encore adopté les réveils faits ailleurs
+ *  réécrivait `_workspace/state.json` SANS eux — les 23 expériences réveillées
+ *  disparaissaient de l'index partagé pour tous les postes, sans qu'aucune
+ *  suppression ne l'ait demandé. On publie donc la FUSION (`mergeWorkspaceStates`) :
+ *  les listes s'unissent (la plus récente décrit), les tombes et les réveils
+ *  s'ADDITIONNENT. Une tombe reste une tombe : elle n'est jamais retirée ici,
+ *  et c'est elle qui empêche une liste unie de ressusciter un dataset supprimé. */
 export const publishableWorkspaceState = (local, remote) => {
   const mine = parseWorkspaceState(local);
   if (!mine) return null;
   const theirs = parseWorkspaceState(remote);
   if (!theirs) return mine;
-  return { ...mine, mirror: mergeDriveMirrors(mine.mirror, theirs.mirror) };
+  return mergeWorkspaceStates(mine, theirs);
 };
 
 /** La liste des datasets d'un poste, COMPLÉTÉE par celle du Drive : les datasets

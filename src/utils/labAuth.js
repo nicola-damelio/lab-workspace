@@ -37,6 +37,17 @@ export const setServerAdminToken = (token) => {
 
 const REQUEST_TIMEOUT_MS = 15000;
 
+/** L'âge de CETTE page (ms epoch), figé par Vite au build. 0 hors build Vite
+ *  (tests, serveur de développement sans define) : le serveur ne peut alors pas
+ *  dater la page, et ne la refuse pas. */
+const appBuildAt = () => {
+  try { return typeof __APP_BUILD_AT__ !== 'undefined' ? Number(__APP_BUILD_AT__) || 0 : 0; } catch { return 0; }
+};
+/** L'empreinte du build, pour les journaux du serveur ('' hors build Vite). */
+const appBuildCommit = () => {
+  try { return typeof __APP_COMMIT__ !== 'undefined' ? String(__APP_COMMIT__) : ''; } catch { return ''; }
+};
+
 const request = async (path, { method = 'GET', body, headers = {} } = {}) => {
   const base = authServerBase();
   if (!base) return { ok: false, status: 0, error: 'no_server', message: 'Aucun serveur de jetons configuré.' };
@@ -105,9 +116,16 @@ export const fetchRoster = async () => {
   return { ok: true, members: res.json.members };
 };
 
-/** Connexion : { name, password } → { token, name, role, id }. */
+/** Connexion : { name, password } → { token, name, role, id }.
+ *  La page DÉCLARE son âge (`build`) et son empreinte (`commit`) : le serveur
+ *  peut refuser une page antérieure à son `MIN_APP_BUILD_AT` (réponse 426
+ *  `client_too_old`) — c'est ce qui empêche une page ouverte AVANT le
+ *  déploiement de continuer d'écrire avec les anciennes règles. */
 export const serverLogin = async (name, password) => {
-  const res = await request('/api/auth/login', { method: 'POST', body: { name, password } });
+  const res = await request('/api/auth/login', {
+    method: 'POST',
+    body: { name, password, build: appBuildAt(), commit: appBuildCommit() }
+  });
   if (!res.ok || !res.json || !res.json.token) {
     return {
       ok: false,

@@ -156,6 +156,15 @@ import {
   describeUnrecordedDrops, describeKeptExperiments, describeRemovedExperiments,
   describeSkippedAdditions
 } from './utils/experimentTombstones';
+/* ⛔ L'ÉCRITURE SOUS VERROU DE VERSION (voir utils/datasetWriteGuard.js) : la
+   copie partagée est relue AU MOMENT d'écrire, ce qu'un collègue vient d'y créer
+   y est remis, et la transaction refuse une écriture bâtie sur une version
+   périmée — elle est rejouée avec la copie fraîche. C'est la fenêtre entre la
+   relecture et l'écriture (le temps de la compression) qui perdait les
+   expériences de l'autre poste. */
+import {
+  guardedDatasetWrite, datasetRevOf, DatasetWriteConflict, DATASET_REV_FIELD
+} from './utils/datasetWriteGuard';
 /* 👥 LA MÊME RÈGLE POUR LA LISTE DES COMPTES (voir utils/teamAccounts.js) : la
    copie partagée est relue avant d'écrire, la liste est FUSIONNÉE (personne par
    personne) et une suppression est un record qui voyage. Sans elle, un poste
@@ -2175,6 +2184,80 @@ if (customType === 'dosy') {
     return out.tests;
   };
 
+  /** La copie partagée, DÉCOMPRESSÉE, au moment d'écrire (même format de payload
+   *  que partout ailleurs). `null` = illisible ou absente : on écrit alors comme
+   *  avant (une lecture impossible ne bloque jamais une sauvegarde). */
+  const decodeSharedDatasetTests = (data) => {
+    if (!data || !data.payload) return null;
+    try {
+      const raw = data.isCompressed && typeof data.payload === 'string'
+        ? LZString.decompressFromUTF16(data.payload)
+        : data.payload;
+      if (!raw) return null;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed && parsed.tests) ? parsed.tests : [];
+    } catch (err) {
+      console.warn('[experiments] shared copy unreadable while writing — the local lock stays the only net:', err && err.message);
+      return null;
+    }
+  };
+
+  /* ⛔ L'ÉCRITURE QUI NE PERD RIEN (voir utils/datasetWriteGuard.js).
+     `guardDistantExperiments` relit la copie AVANT la compression ; il reste
+     ensuite le temps de compresser (~1 s pour 1 Mo) pendant lequel un collègue
+     peut écrire — et cette écriture-là était perdue. Ici la relecture EST
+     l'écriture : la transaction relit le document, remet ce qu'il porte et que
+     nous n'avons pas, et REFUSE la nôtre si la version a changé ; on recommence
+     alors avec la copie fraîche. Ce que la refusion a rattrapé est DIT (même
+     message que le verrou d'avant écriture) et l'écran le reçoit. */
+  const writeSharedDatasetDocument = async ({ docRef, payload, tests, datasetId, rebuild }) => {
+    const targetId = datasetId || currentDatasetIdRef.current;
+    const forget = voluntaryForgetRef.current;
+    /* ♻️ Replace / undo-redo : le geste a le droit d'écarter — la refusion se
+       tait pour ce dataset, le temps que cette écriture passe (même silence que
+       `guardDistantExperiments`, et pour la même raison). */
+    const silent = forget.datasetId === String(targetId)
+      && Date.now() - forget.at < DISTANT_GUARD_SILENCE_MS;
+    const { deletions } = experimentRecordsOf(targetId);
+    const written = await guardedDatasetWrite({
+      payload,
+      tests,
+      deletions,
+      rebuild,
+      read: async () => {
+        const snap = await docRef.get();
+        const data = snap && snap.exists ? snap.data() : null;
+        return { rev: datasetRevOf(data), tests: silent ? null : decodeSharedDatasetTests(data) };
+      },
+      commit: ({ payload: body, expectedRev }) => {
+        /* Pas de transaction disponible (SDK réduit) : on écrit comme avant, la
+           relecture ci-dessus ayant déjà remis ce que la copie portait. */
+        if (!db || typeof db.runTransaction !== 'function') {
+          return docRef.set(body, { merge: true });
+        }
+        return db.runTransaction(async (tx) => {
+          const snap = await tx.get(docRef);
+          const data = snap && snap.exists ? snap.data() : null;
+          const now = datasetRevOf(data);
+          /* ② La version a changé depuis notre relecture : refuser, pour que ③
+             (dans guardedDatasetWrite) relise et refusionne. */
+          if (expectedRev !== null && now !== expectedRev) throw new DatasetWriteConflict(expectedRev, now);
+          tx.set(docRef, { ...body, [DATASET_REV_FIELD]: now + 1 }, { merge: true });
+        });
+      }
+    });
+    if (!silent && written.rescued.length) {
+      console.warn('[experiments] write-time remerge:', written.rescued.map((t) => t.name || t.id));
+      setDialog((prev) => prev || {
+        type: 'alert',
+        title: '⚠ Experiments from another workstation were about to disappear',
+        message: describeDistantRescue(written.rescued)
+      });
+      rememberExperiments(targetId, written.tests);
+    }
+    return written;
+  };
+
   /* Ce que l'écran montre est RETENU : la mémoire se remplit au fil du rendu
      (une union par identité — idempotente, donc la frappe ne change rien). */
   rememberExperiments(currentDatasetId, tests);
@@ -4159,18 +4242,42 @@ useEffect(() => {
         const docRef = db
           .collection(`artifacts/${appId}/public/data/datasets`)
           .doc(currentDatasetId);
-        await docRef
-          .set(updatedPayload, { merge: true })
-          .then(() => {
-            setSaveStatus('saved');
-            setSaveTarget('cloud');
-            setSaveErrorMsg('');
-          })
-          .catch((err) => {
-            setSaveStatus('error');
-            setSaveErrorMsg(err.message);
-            console.error('Firestore save error:', err);
+        try {
+          /* ⛔ ① RELIRE AU MOMENT D'ÉCRIRE, ② ÉCRIRE SOUS VERSION, ③ RECOMMENCER
+             (voir writeSharedDatasetDocument) : l'expérience qu'un collègue a
+             créée pendant la compression entre dans la liste écrite, et une
+             version changée sous nos pieds fait rejouer l'écriture au lieu de
+             l'écraser. Le verrou d'avant écriture reste en place (il remet déjà
+             l'écran d'aplomb) ; celui-ci ferme la fenêtre qui restait. */
+          const written = await writeSharedDatasetDocument({
+            docRef,
+            payload: updatedPayload,
+            tests: rawData.tests,
+            datasetId: currentDatasetId,
+            rebuild: async (mergedTests) => ({
+              ...updatedPayload,
+              testCount: mergedTests.length,
+              payload: await compressDatasetForSave({ ...rawData, tests: mergedTests }, urgent)
+            })
           });
+          if (written.rescued.length) {
+            /* Le Drive et l'écran suivent la liste refondue : les deux mémoires
+               de cette base ne racontent pas deux histoires. */
+            rawData.tests = written.tests;
+            updatedPayload.testCount = written.tests.length;
+            updatedPayload.payload = written.payload.payload;
+            mirrorDatasetContent(currentDatasetId, updatedPayload);
+            publishDatasetStructure({ datasetId: currentDatasetId, datasetName: datasetTitle || '', data: rawData })
+              .catch(() => {});
+          }
+          setSaveStatus('saved');
+          setSaveTarget('cloud');
+          setSaveErrorMsg('');
+        } catch (err) {
+          setSaveStatus('error');
+          setSaveErrorMsg(err.message);
+          console.error('Firestore save error:', err);
+        }
       } else {
         let stored = [];
         try {
@@ -5360,10 +5467,37 @@ const saveLeavingDataset = (datasetId, isAdmin) => {
       if (!holdsLatestWriteTicket(datasetId, writeTicket)) return;
       mirrorDatasetContent(datasetId, updatedPayload);
       if (db) {
-        await db
+        const docRef = db
           .collection(`artifacts/${appId}/public/data/datasets`)
-          .doc(datasetId)
-          .set(updatedPayload, { merge: true });
+          .doc(datasetId);
+        if (isAdmin) {
+          /* Une base d'administration ne porte pas d'expériences : rien à
+             refusionner, et sa charge est un bloc unique (la fusion de deux
+             rédactions n'a pas de sens ici). */
+          await docRef.set(updatedPayload, { merge: true });
+        } else {
+          /* ⛔ Le MÊME verrou de version qu'à l'enregistrement automatique :
+             quitter une base ne peut pas écraser ce qu'un collègue vient d'y
+             écrire pendant que la page se fermait (voir
+             writeSharedDatasetDocument). Si la refusion rattrape quelque chose,
+             la copie du Drive suit — c'est elle qui rouvre la base ailleurs. */
+          const written = await writeSharedDatasetDocument({
+            docRef,
+            payload: updatedPayload,
+            tests: rawData.tests,
+            datasetId,
+            rebuild: async (mergedTests) => ({
+              ...updatedPayload,
+              testCount: mergedTests.length,
+              payload: await compressDatasetForSave({ ...rawData, tests: mergedTests })
+            })
+          });
+          if (written.rescued.length) {
+            updatedPayload.testCount = written.tests.length;
+            updatedPayload.payload = written.payload.payload;
+            mirrorDatasetContent(datasetId, updatedPayload);
+          }
+        }
       } else {
         let stored = [];
         try {

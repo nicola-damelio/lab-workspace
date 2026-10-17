@@ -57,8 +57,8 @@ ok(T.describeDistantRescue(kept.rescued).includes('Cintia Test 84'),
   'le compte-rendu nomme l’expérience sauvée');
 eq(ids(T.protectDistantDrops([A, B, C], [], []).tests), ['t1', 't2', 't3'],
   'une liste locale VIDE (poste neuf, cache vidé) ne peut plus vider le document partagé');
-eq(Object.keys(kept).sort(), ['removed', 'rescued', 'tests'],
-  'la forme rendue reste celle des autres verrous (tests / rescued / removed)');
+eq(Object.keys(kept).sort(), ['collapsed', 'removed', 'rescued', 'tests'],
+  'la forme rendue reste celle des autres verrous (tests / rescued / removed / collapsed)');
 
 /* ── 2. CE QUI N'EST PAS UNE PERTE ───────────────────────────────────────── */
 eq(ids(T.protectDistantDrops([A, B], [A, B, C], []).tests), ['t1', 't2', 't3'],

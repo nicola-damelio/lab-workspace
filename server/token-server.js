@@ -231,6 +231,13 @@ const FIREBASE_SA_JSON = env('FIREBASE_SERVICE_ACCOUNT').trim();
 const FIREBASE_SA_B64 = env('FIREBASE_SERVICE_ACCOUNT_B64').trim();
 const FIREBASE_SA_FILE = env('FIREBASE_SA_FILE').trim();
 const ADMIN_TOKEN = env('ADMIN_TOKEN').trim();
+/* Fetta 1 — L'ÂGE MINIMAL D'UNE PAGE (ms epoch). 0 (défaut) = aucun refus.
+   Une page ouverte AVANT le déploiement des verrous continue d'écrire avec les
+   anciennes règles et ne déclare aucune version : en posant ici l'instant du
+   déploiement, sa connexion est refusée (`client_too_old`) et elle doit être
+   rechargée. À POSER SEULEMENT après avoir déployé la page qui envoie `build`
+   (voir src/utils/labAuth.js), sinon plus personne ne peut se connecter. */
+const MIN_APP_BUILD_AT = Number(env('MIN_APP_BUILD_AT').trim()) || 0;
 const ACCOUNTS_FILE = path.resolve(process.cwd(), env('ACCOUNTS_FILE', 'workspace-accounts.json'));
 const PBKDF2_ITERATIONS = parseInt(env('PBKDF2_ITERATIONS', '150000'), 10) || 150000;
 const CUSTOM_TOKEN_AUD =
@@ -375,8 +382,13 @@ function setMemberPassword(member, password, store, { superseded = [], upgraded 
 const upgradeMemberHash = (member, password, store) =>
   setMemberPassword(member, password, store, { upgraded: true });
 
-/** Jeton personnalisé Firebase (JWT RS256) — format officiel du SDK Admin. */
-function mintCustomToken(member, sa) {
+/** Jeton personnalisé Firebase (JWT RS256) — format officiel du SDK Admin.
+ *  `app` = { build, commit } de la page qui se connecte : ces deux valeurs
+ *  deviennent des revendications, donc les règles Firestore peuvent exiger un
+ *  build minimal (`request.auth.token.appBuild >= N`) sans rien demander au
+ *  navigateur — une page ancienne ne peut pas mentir sur son âge, c'est le
+ *  serveur qui l'a datée. */
+function mintCustomToken(member, sa, app = {}) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT' };
   if (sa.privateKeyId) header.kid = sa.privateKeyId;
@@ -391,6 +403,8 @@ function mintCustomToken(member, sa) {
       lab: true,
       name: String(member.name || ''),
       role: member.role === 'superuser' ? 'superuser' : 'user',
+      appBuild: Number(app.build) || 0,
+      appCommit: String(app.commit || '').slice(0, 40),
     },
   };
   const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
@@ -469,12 +483,32 @@ async function handleAuthLogin(body, ip) {
     return authRejected();
   }
   if (verdict === 'upgrade') upgradeMemberHash(member, password, store);
+  /* ── Fetta 1 : LA PAGE DOIT ÊTRE ASSEZ RÉCENTE ────────────────────────────
+     Une page ouverte avant le déploiement des verrous écrit encore avec les
+     anciennes règles, et ne déclare aucune version : c'est elle qui a continué
+     d'écrire après le logout (23.117 octets, 15:22:03). Ici, sa connexion est
+     refusée — le message dit quoi faire, et rien d'autre ne change. */
+  const build = Number(body && body.build) || 0;
+  const commit = String((body && body.commit) || '').slice(0, 40);
+  if (MIN_APP_BUILD_AT > 0 && build < MIN_APP_BUILD_AT) {
+    console.warn(`[auth] page trop ancienne refusée pour « ${name} » (build ${build || 'inconnu'} < ${MIN_APP_BUILD_AT}, commit ${commit || 'inconnu'})`);
+    return {
+      http: 426,
+      json: {
+        ok: false,
+        error: 'client_too_old',
+        error_description: 'Cette page a été ouverte avant la mise à jour qui protège les données. Rechargez-la (Ctrl+Maj+R, ou Cmd+Maj+R), puis reconnectez-vous.',
+        min_app_build_at: MIN_APP_BUILD_AT,
+        build
+      }
+    };
+  }
   const role = member.role === 'superuser' ? 'superuser' : 'user';
   return {
     http: 200,
     json: {
       ok: true,
-      token: mintCustomToken({ ...member, role }, sa),
+      token: mintCustomToken({ ...member, role }, sa, { build, commit }),
       id: member.id || '',
       name: member.name,
       role,
