@@ -85,3 +85,10 @@ workspace-shared-token.json.*
 # son `finally` — s'il en reste un dossier, c'est qu'une exécution a été tuée.
 /.tmp_persist/
 
+# Les profils Chrome jetables des sondes qui pilotent un VRAI navigateur (le
+# rendu mesuré, le clic mesuré : _preview_check.js et les sondes `*.cjs`). Ce
+# sont des milliers de fichiers binaires de cache, aucun n'appartient à l'app :
+# 3 844 fichiers dans _chrome_profile_{apply,bg,err} le 17/10/2026, et c'est ce
+# qui a failli entrer dans un commit. Ils restent sur le disque, jamais dans git.
+/_chrome_profile_*/
+
